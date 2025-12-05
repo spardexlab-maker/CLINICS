@@ -15,10 +15,9 @@ export interface SystemConfig {
 
 // --- أدوات مساعدة ---
 
-// 1. ضغط الصور لتقليل الحجم قبل الرفع (توفير المساحة)
 const compressImage = async (imageFile: File): Promise<File> => {
   const options = {
-    maxSizeMB: 0.1, // الحد الأقصى 100 كيلوبايت
+    maxSizeMB: 0.1,
     maxWidthOrHeight: 1024,
     useWebWorker: true
   };
@@ -30,7 +29,6 @@ const compressImage = async (imageFile: File): Promise<File> => {
   }
 };
 
-// 2. تحويل Base64 إلى ملف (لأن الواجهة الحالية تستخدم Base64)
 const base64ToBlob = async (base64: string): Promise<Blob | null> => {
     try {
         const res = await fetch(base64);
@@ -44,7 +42,6 @@ export const dbService = {
   
   // --- 1. المصادقة (Auth) ---
   login: async (email: string, password?: string): Promise<{ success: boolean; clinic?: Clinic; error?: string }> => {
-    // جلب بيانات العيادة من السيرفر
     const { data: clinic, error } = await supabase
       .from('clinics')
       .select('*')
@@ -53,19 +50,16 @@ export const dbService = {
 
     if (error || !clinic) return { success: false, error: 'INVALID_CREDENTIALS' };
 
-    // التحقق من كلمة المرور (تخزين بسيط حالياً)
     if (password && clinic.password !== password) {
       return { success: false, error: 'INVALID_CREDENTIALS' };
     }
 
-    // التحقق من صلاحية الاشتراك (للطبيب فقط)
     if (clinic.role === 'doctor') {
         const today = new Date();
         const endDate = clinic.subscription_end_date ? new Date(clinic.subscription_end_date) : null;
         const isActive = clinic.subscription_active;
 
         if (!isActive || (endDate && today > endDate)) {
-            // تحديث الحالة في السيرفر إذا كانت منتهية
             if (isActive) {
                 await supabase.from('clinics').update({ subscription_active: false }).eq('id', clinic.id);
             }
@@ -73,7 +67,6 @@ export const dbService = {
         }
     }
 
-    // تحويل البيانات لنسق التطبيق وحفظ الجلسة محلياً للسرعة
     const sessionClinic: Clinic = {
         id: clinic.id,
         name: clinic.name,
@@ -121,7 +114,6 @@ export const dbService = {
   },
 
   addClinic: async (data: { name: string; email: string; password?: string }) => {
-      // اشتراك تجريبي لمدة شهر افتراضياً
       const date = new Date();
       date.setMonth(date.getMonth() + 1);
 
@@ -240,23 +232,20 @@ export const dbService = {
           diagnosis: v.diagnosis,
           treatment: v.treatment,
           notes: v.notes,
-          prescriptionImage: v.image_url // استرجاع رابط الصورة
+          prescriptionImage: v.image_url 
       }));
   },
 
   addVisit: async (visit: any) => {
       let imageUrl = null;
 
-      // إذا كانت هناك صورة (Base64)، نقوم برفعها
       if (visit.prescriptionImage && visit.prescriptionImage.startsWith('data:')) {
           const blob = await base64ToBlob(visit.prescriptionImage);
           if (blob) {
               const file = new File([blob], "rx.jpg", { type: "image/jpeg" });
-              // ضغط الصورة
               const compressed = await compressImage(file);
               const fileName = `${Date.now()}_rx.jpg`;
               
-              // الرفع إلى Supabase Storage
               const { data: uploadData, error: uploadError } = await supabase.storage
                   .from('visit-attachments')
                   .upload(fileName, compressed, {
@@ -267,8 +256,6 @@ export const dbService = {
               if (!uploadError && uploadData) {
                   const { data: publicUrl } = supabase.storage.from('visit-attachments').getPublicUrl(fileName);
                   imageUrl = publicUrl.publicUrl;
-              } else if (uploadError) {
-                  console.error("Image Upload Failed:", uploadError);
               }
           }
       }
@@ -313,16 +300,30 @@ export const dbService = {
       });
   },
 
-  // --- 6. الأدوية (قائمة بسيطة في LocalStorage للسرعة) ---
-  getMedications: (): string[] => {
-      const data = localStorage.getItem('iraqicare_medications');
-      return data ? JSON.parse(data) : ["Paracetamol", "Amoxicillin", "Ibuprofen"]; 
+  // --- 6. الأدوية (Medications) - محدث للسحابة ---
+  getMedications: async (): Promise<string[]> => {
+      const { data, error } = await supabase
+        .from('medications')
+        .select('name')
+        .order('name', { ascending: true });
+      
+      if (error) {
+          console.error("Error fetching meds:", error);
+          return [];
+      }
+      return data.map(row => row.name);
   },
 
-  addMedication: (name: string): string => {
-      const meds = dbService.getMedications();
-      if (!meds.includes(name)) {
-          localStorage.setItem('iraqicare_medications', JSON.stringify([...meds, name]));
+  addMedication: async (name: string): Promise<string> => {
+      // التحقق من الوجود لتجنب التكرار
+      const { data: existing } = await supabase
+          .from('medications')
+          .select('id')
+          .eq('name', name)
+          .single();
+
+      if (!existing) {
+          await supabase.from('medications').insert({ name });
       }
       return name;
   },
@@ -356,7 +357,7 @@ export const dbService = {
       await supabase.from('financial_transactions').delete().eq('id', id);
   },
 
-  // --- 8. رصيد الذكاء الاصطناعي (AI Quota) ---
+  // --- 8. رصيد الذكاء الاصطناعي ---
   checkAIQuota: async (clinicId: string): Promise<boolean> => {
       const { data } = await supabase.from('clinics').select('ai_usage_count, ai_limit').eq('id', clinicId).single();
       if (!data) return false;
@@ -370,7 +371,7 @@ export const dbService = {
       }
   },
 
-  // --- 9. إعدادات النظام (System Config - Local) ---
+  // --- 9. إعدادات النظام ---
   getSystemConfig: (): SystemConfig => {
     const data = localStorage.getItem(SYSTEM_CONFIG_KEY);
     return data ? JSON.parse(data) : {

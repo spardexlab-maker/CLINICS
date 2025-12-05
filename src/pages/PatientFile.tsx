@@ -99,7 +99,9 @@ const PatientFile: React.FC<PatientFileProps> = ({ patientId, onLogout }) => {
       setVisits(v);
       const vl = await dbService.getPatientVitals(patientId);
       setVitals(vl);
-      const meds = dbService.getMedications(); // Local sync
+      
+      // التعديل هنا: انتظار تحميل الأدوية من السيرفر
+      const meds = await dbService.getMedications(); 
       setAllMeds(meds);
       
       setEditFormData({
@@ -228,13 +230,14 @@ const PatientFile: React.FC<PatientFileProps> = ({ patientId, onLogout }) => {
     }
   };
 
-  const addMedicationToVisit = (med: string) => {
+  // التعديل هنا: حفظ الدواء الجديد في السحابة
+  const addMedicationToVisit = async (med: string) => {
       const currentTreatment = visitForm.treatment;
       const newTreatment = currentTreatment ? `${currentTreatment}, ${med}` : med;
       setVisitForm(prev => ({ ...prev, treatment: newTreatment }));
       
       if (!allMeds.includes(med)) {
-          dbService.addMedication(med);
+          await dbService.addMedication(med); // await here
           setAllMeds(prev => [...prev, med]);
       }
       
@@ -878,7 +881,7 @@ const PatientFile: React.FC<PatientFileProps> = ({ patientId, onLogout }) => {
                         onClick={() => setPreviewImage(null)}
                         className="absolute top-4 right-4 text-white hover:text-gray-300"
                       >
-                          <Trash size={32} className="rotate-45" />
+                          <Trash size={32} className="rotate-45" /> {/* Close Icon */}
                       </button>
                       <img 
                         src={previewImage} 
