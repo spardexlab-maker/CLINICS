@@ -1,23 +1,15 @@
 import { supabase } from '../supabaseClient';
 import imageCompression from 'browser-image-compression';
-import { Patient, Visit, Clinic, VitalLog, FinancialTransaction } from '../types';
+import { Patient, Visit, Clinic, VitalLog, FinancialTransaction, SystemConfig } from '../types';
 
 const SYSTEM_CONFIG_KEY = 'iraqicare_config';
 const CURRENT_SESSION_KEY = 'iraqicare_session';
-
-export interface SystemConfig {
-  paymentBarcodeUrl: string;
-  paymentInstructions: string;
-  supportWhatsapp: string;
-  customLogoUrl?: string;
-  socialLinks: { facebook: string; instagram: string; youtube: string; };
-}
 
 // --- أدوات مساعدة ---
 
 const compressImage = async (imageFile: File): Promise<File> => {
   const options = {
-    maxSizeMB: 0.1,
+    maxSizeMB: 0.1, // الحد الأقصى 100 كيلوبايت
     maxWidthOrHeight: 1024,
     useWebWorker: true
   };
@@ -36,6 +28,29 @@ const base64ToBlob = async (base64: string): Promise<Blob | null> => {
     } catch (e) {
         return null;
     }
+};
+
+// دالة لرفع الصور (لوجو أو وصفة) إلى Supabase
+const uploadImageToSupabase = async (base64: string, folder: string): Promise<string | null> => {
+    const blob = await base64ToBlob(base64);
+    if (!blob) return null;
+    
+    const file = new File([blob], "image.jpg", { type: "image/jpeg" });
+    const compressed = await compressImage(file);
+    const fileName = `${folder}/${Date.now()}.jpg`;
+
+    // نستخدم نفس الباكت visit-attachments للسهولة
+    const { error: uploadError } = await supabase.storage
+        .from('visit-attachments') 
+        .upload(fileName, compressed, { contentType: 'image/jpeg', upsert: false });
+
+    if (uploadError) {
+        console.error("Upload Error:", uploadError);
+        return null;
+    }
+    
+    const { data } = supabase.storage.from('visit-attachments').getPublicUrl(fileName);
+    return data.publicUrl;
 };
 
 export const dbService = {
@@ -178,7 +193,9 @@ export const dbService = {
           phone: p.phone,
           gender: p.gender,
           bloodType: p.blood_type,
-          chronicDiseases: p.chronic_diseases || []
+          chronicDiseases: p.chronic_diseases || [],
+          weight: p.weight,
+          allergies: p.allergies // إضافة التحسس
       }));
   },
 
@@ -193,7 +210,9 @@ export const dbService = {
           phone: data.phone,
           gender: data.gender,
           bloodType: data.blood_type,
-          chronicDiseases: data.chronic_diseases || []
+          chronicDiseases: data.chronic_diseases || [],
+          weight: data.weight,
+          allergies: data.allergies
       };
   },
 
@@ -202,10 +221,12 @@ export const dbService = {
           clinic_id: patient.clinicId,
           name: patient.name,
           age: patient.age,
-          phone: patient.phone,
+          phone: patient.phone || null,
           gender: patient.gender,
           blood_type: patient.bloodType,
-          chronic_diseases: patient.chronicDiseases
+          chronic_diseases: patient.chronicDiseases,
+          weight: patient.weight,
+          allergies: patient.allergies // إضافة التحسس
       });
       if (error) console.error("Error adding patient:", error);
   },
@@ -214,10 +235,12 @@ export const dbService = {
       await supabase.from('patients').update({
           name: data.name,
           age: data.age,
-          phone: data.phone,
+          phone: data.phone || null,
           gender: data.gender,
           blood_type: data.bloodType,
-          chronic_diseases: data.chronicDiseases
+          chronic_diseases: data.chronicDiseases,
+          weight: data.weight,
+          allergies: data.allergies
       }).eq('id', id);
   },
 
@@ -232,7 +255,8 @@ export const dbService = {
           diagnosis: v.diagnosis,
           treatment: v.treatment,
           notes: v.notes,
-          prescriptionImage: v.image_url 
+          prescriptionImage: v.image_url,
+          allergies: v.allergies // إضافة تحسس الزيارة
       }));
   },
 
@@ -240,24 +264,8 @@ export const dbService = {
       let imageUrl = null;
 
       if (visit.prescriptionImage && visit.prescriptionImage.startsWith('data:')) {
-          const blob = await base64ToBlob(visit.prescriptionImage);
-          if (blob) {
-              const file = new File([blob], "rx.jpg", { type: "image/jpeg" });
-              const compressed = await compressImage(file);
-              const fileName = `${Date.now()}_rx.jpg`;
-              
-              const { data: uploadData, error: uploadError } = await supabase.storage
-                  .from('visit-attachments')
-                  .upload(fileName, compressed, {
-                      contentType: 'image/jpeg',
-                      upsert: false
-                  });
-
-              if (!uploadError && uploadData) {
-                  const { data: publicUrl } = supabase.storage.from('visit-attachments').getPublicUrl(fileName);
-                  imageUrl = publicUrl.publicUrl;
-              }
-          }
+          // رفع الصورة باستخدام الدالة المساعدة
+          imageUrl = await uploadImageToSupabase(visit.prescriptionImage, 'visits');
       }
 
       const { error } = await supabase.from('visits').insert({
@@ -267,13 +275,33 @@ export const dbService = {
           diagnosis: visit.diagnosis,
           treatment: visit.treatment,
           notes: visit.notes,
-          image_url: imageUrl
+          image_url: imageUrl,
+          allergies: visit.allergies
       });
       
       if (error) console.error("Error adding visit:", error);
   },
 
-  // --- 5. العلامات الحيوية (Vital Signs) ---
+  // ✨ تحديث الزيارة (مهم جداً)
+  updateVisit: async (visitId: string, data: any) => {
+      const updates: any = {
+          visit_date: data.date,
+          diagnosis: data.diagnosis,
+          treatment: data.treatment,
+          notes: data.notes,
+          allergies: data.allergies
+      };
+      
+      // رفع الصورة فقط إذا تغيرت (جاءت كـ base64)
+      if (data.prescriptionImage && data.prescriptionImage.startsWith('data:')) {
+          const newUrl = await uploadImageToSupabase(data.prescriptionImage, 'visits');
+          if (newUrl) updates.image_url = newUrl;
+      }
+
+      await supabase.from('visits').update(updates).eq('id', visitId);
+  },
+
+  // --- 5. العلامات الحيوية ---
   getPatientVitals: async (patientId: string): Promise<VitalLog[]> => {
       const { data } = await supabase.from('vital_logs').select('*').eq('patient_id', patientId).order('date', { ascending: false });
       return (data || []).map(v => ({
@@ -300,22 +328,18 @@ export const dbService = {
       });
   },
 
-  // --- 6. الأدوية (Medications) - محدث للسحابة ---
+  // --- 6. الأدوية ---
   getMedications: async (): Promise<string[]> => {
       const { data, error } = await supabase
         .from('medications')
         .select('name')
         .order('name', { ascending: true });
       
-      if (error) {
-          console.error("Error fetching meds:", error);
-          return [];
-      }
+      if (error) return [];
       return data.map(row => row.name);
   },
 
   addMedication: async (name: string): Promise<string> => {
-      // التحقق من الوجود لتجنب التكرار
       const { data: existing } = await supabase
           .from('medications')
           .select('id')
@@ -328,7 +352,7 @@ export const dbService = {
       return name;
   },
 
-  // --- 7. الحسابات المالية (Accounting) ---
+  // --- 7. الحسابات المالية ---
   getTransactions: async (clinicId: string): Promise<FinancialTransaction[]> => {
       const { data } = await supabase.from('financial_transactions').select('*').eq('clinic_id', clinicId).order('date', { ascending: false });
       return (data || []).map(t => ({
@@ -371,19 +395,52 @@ export const dbService = {
       }
   },
 
-  // --- 9. إعدادات النظام ---
-  getSystemConfig: (): SystemConfig => {
-    const data = localStorage.getItem(SYSTEM_CONFIG_KEY);
-    return data ? JSON.parse(data) : {
+  // --- 9. إعدادات النظام (System Config - Supabase) ---
+  getSystemConfig: async (): Promise<SystemConfig> => {
+    // جلب من Supabase
+    const { data } = await supabase.from('system_config').select('*').single();
+    if (!data) return {
        paymentBarcodeUrl: '',
        paymentInstructions: 'يرجى تحويل الاشتراك.',
        supportWhatsapp: '',
        customLogoUrl: '',
+       appLogoUrl: '',
        socialLinks: { facebook: '', instagram: '', youtube: '' }
+    };
+    return {
+       paymentBarcodeUrl: data.payment_barcode_url,
+       paymentInstructions: data.payment_instructions,
+       supportWhatsapp: data.support_whatsapp,
+       customLogoUrl: data.custom_logo_url,
+       appLogoUrl: data.app_logo_url,
+       socialLinks: data.social_links || { facebook: '', instagram: '', youtube: '' }
     };
   },
 
-  updateSystemConfig: (config: SystemConfig) => {
-    localStorage.setItem(SYSTEM_CONFIG_KEY, JSON.stringify(config));
+  updateSystemConfig: async (config: SystemConfig) => {
+    // رفع الصور إذا كانت جديدة
+    let appLogoUrl = config.appLogoUrl;
+    let customLogoUrl = config.customLogoUrl;
+    let barcodeUrl = config.paymentBarcodeUrl;
+
+    if (appLogoUrl && appLogoUrl.startsWith('data:')) {
+        appLogoUrl = await uploadImageToSupabase(appLogoUrl, 'config');
+    }
+    if (customLogoUrl && customLogoUrl.startsWith('data:')) {
+        customLogoUrl = await uploadImageToSupabase(customLogoUrl, 'config');
+    }
+    if (barcodeUrl && barcodeUrl.startsWith('data:')) {
+        barcodeUrl = await uploadImageToSupabase(barcodeUrl, 'config');
+    }
+
+    await supabase.from('system_config').upsert({
+        id: 1, // صف واحد فقط للإعدادات
+        payment_barcode_url: barcodeUrl,
+        payment_instructions: config.paymentInstructions,
+        support_whatsapp: config.supportWhatsapp,
+        custom_logo_url: customLogoUrl,
+        app_logo_url: appLogoUrl,
+        social_links: config.socialLinks
+    });
   }
 };

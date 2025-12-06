@@ -1,17 +1,14 @@
-
-// Data Models
 export interface Clinic {
   id: string;
   name: string;
   email: string;
-  password?: string; // Added for auth simulation
-  role: 'admin' | 'doctor'; // 'admin' = SaaS Owner, 'doctor' = Clinic User
+  password?: string;
+  role: 'admin' | 'doctor';
   subscriptionActive: boolean;
-  subscriptionEndDate?: string; // ISO Date string
-  // AI Quota System
+  subscriptionEndDate?: string;
   aiUsageCount: number;
   aiUsageLimit: number;
-  lastAiUsageReset: string; // ISO Date string to track monthly reset
+  lastAiUsageReset: string;
 }
 
 export interface Patient {
@@ -19,47 +16,62 @@ export interface Patient {
   clinicId: string;
   name: string;
   age: number;
-  phone: string;
+  phone?: string; // أصبح اختيارياً
   gender: 'male' | 'female';
   chronicDiseases: string[];
   bloodType?: string;
+  weight?: number;
+  allergies?: string; // ميزة جديدة: التحسس
 }
 
 export interface Visit {
   id: string;
   clinicId: string;
   patientId: string;
-  date: string; // ISO Date string
+  date: string;
   diagnosis: string;
   treatment: string;
   notes: string;
-  prescriptionImage?: string; // Base64 Data URL for the Rx Image
+  prescriptionImage?: string;
+  allergies?: string; // ميزة جديدة: تحسس خاص بالزيارة
 }
 
 export interface VitalLog {
   id: string;
   patientId: string;
-  date: string; // ISO Date string (Timestamp)
-  bloodPressure: string; // e.g. "120/80"
-  heartRate: number; // bpm
-  oxygenLevel: number; // %
-  temperature: number; // Celsius
-  bloodSugar: number; // mg/dL
+  date: string;
+  bloodPressure: string;
+  heartRate: number;
+  oxygenLevel: number;
+  temperature: number;
+  bloodSugar: number;
 }
 
 export interface FinancialTransaction {
   id: string;
   clinicId: string;
   type: 'income' | 'expense';
-  category: string; // e.g., 'Kashfiya', 'Surgery', 'Rent', 'Equipment'
+  category: string;
   amount: number;
-  date: string; // ISO Date string
+  date: string;
   description: string;
 }
 
-// AI Types
 export interface AIChatMessage {
   role: 'user' | 'model';
   content: string;
   timestamp: number;
+}
+
+export interface SystemConfig {
+  paymentBarcodeUrl: string;
+  paymentInstructions: string;
+  supportWhatsapp: string;
+  customLogoUrl?: string; // اللوجو الثانوي
+  appLogoUrl?: string;    // اللوجو الأساسي (بديل السماعة)
+  socialLinks: {
+    facebook: string;
+    instagram: string;
+    youtube: string;
+  };
 }

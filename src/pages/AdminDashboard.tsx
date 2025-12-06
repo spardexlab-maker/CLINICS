@@ -4,7 +4,7 @@ import Button from '../components/Button';
 import Modal from '../components/Modal';
 import { dbService, SystemConfig } from '../services/dbService';
 import { Clinic } from '../types';
-import { CheckCircle, XCircle, Calendar, Plus, Trash2, Edit2, Settings, List, Save, Clock, RefreshCcw, Ban, Bot } from 'lucide-react';
+import { CheckCircle, XCircle, Calendar, Plus, Trash2, Edit2, Settings, List, Save, Upload, RefreshCcw, Ban, Bot } from 'lucide-react';
 
 interface AdminDashboardProps {
   onLogout: () => void;
@@ -20,6 +20,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       paymentInstructions: '',
       supportWhatsapp: '',
       customLogoUrl: '',
+      appLogoUrl: '',
       socialLinks: { facebook: '', instagram: '', youtube: '' }
   });
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -40,22 +41,35 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
     loadSettings();
   }, []);
 
-  // Update 1: Make loading async
+  // Async loading from Supabase
   const loadClinics = async () => {
     const data = await dbService.getAllClinics();
     setClinics(data);
   };
 
-  const loadSettings = () => {
-      setConfig(dbService.getSystemConfig());
+  const loadSettings = async () => {
+      const data = await dbService.getSystemConfig();
+      setConfig(data);
   };
 
-  // --- Clinic CRUD Logic ---
+  // --- Handlers ---
   
+  // دالة رفع الصور (لوجو التطبيق، اللوجو الثانوي، الباركود)
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, field: 'appLogoUrl' | 'customLogoUrl' | 'paymentBarcodeUrl') => {
+      const file = e.target.files?.[0];
+      if (file) {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+              setConfig(prev => ({ ...prev, [field]: reader.result as string }));
+          };
+          reader.readAsDataURL(file);
+      }
+  };
+
   const handleDelete = async (clinicId: string) => {
-    if (confirm('هل أنت متأكد من حذف هذه العيادة نهائياً؟ سيتم حذف جميع سجلات المرضى والزيارات التابعة لها.')) {
+    if (confirm('هل أنت متأكد من حذف هذه العيادة نهائياً؟')) {
         await dbService.deleteClinic(clinicId);
-        await loadClinics(); // Reload after delete
+        loadClinics();
     }
   };
 
@@ -79,30 +93,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
 
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-        if (modalMode === 'add') {
-            await dbService.addClinic({
-                name: formData.name,
-                email: formData.email,
-                password: formData.password
-            });
-        } else if (modalMode === 'edit' && selectedClinicId) {
-            // Update 2: Ensure updateClinic exists in dbService
-            await dbService.updateClinic(selectedClinicId, {
-                name: formData.name, 
-                email: formData.email, 
-                password: formData.password,
-                aiUsageLimit: parseInt(formData.aiUsageLimit) || 50
-            });
-        }
-        setIsModalOpen(false);
-        await loadClinics();
-    } catch (err) {
-        alert(err instanceof Error ? err.message : 'حدث خطأ');
+    if (modalMode === 'add') {
+        await dbService.addClinic({
+            name: formData.name,
+            email: formData.email,
+            password: formData.password
+        });
+    } else if (modalMode === 'edit' && selectedClinicId) {
+        await dbService.updateClinic(selectedClinicId, {
+            name: formData.name, 
+            email: formData.email, 
+            password: formData.password,
+            aiUsageLimit: parseInt(formData.aiUsageLimit) || 50
+        });
     }
+    setIsModalOpen(false);
+    loadClinics();
   };
-
-  // --- Renewal Logic ---
 
   const openRenewModal = (clinicId: string) => {
       setRenewClinicId(clinicId);
@@ -114,36 +121,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       if (!renewClinicId) return;
       await dbService.extendSubscription(renewClinicId, days);
       setIsRenewModalOpen(false);
-      await loadClinics();
+      loadClinics();
   };
 
   const handleStopSubscription = async (clinicId: string) => {
-      if (confirm('هل أنت متأكد من إلغاء اشتراك هذه العيادة؟ سيتم منع الدخول إليها فوراً.')) {
+      if (confirm('هل أنت متأكد من إلغاء اشتراك هذه العيادة؟')) {
           await dbService.stopSubscription(clinicId);
-          await loadClinics(); 
+          loadClinics(); 
       }
   };
 
-  // --- Settings Logic ---
-
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
       e.preventDefault();
-      dbService.updateSystemConfig(config);
+      await dbService.updateSystemConfig(config);
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 2000);
-  };
-
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return '-';
-    return new Date(dateString).toLocaleDateString('ar-IQ', {
-        year: 'numeric', month: 'short', day: 'numeric'
-    });
+      window.location.reload(); // تحديث الصفحة لرؤية اللوجو الجديد
   };
 
   return (
     <Layout title="إدارة النظام (SaaS)" onLogout={onLogout}>
-      
-      {/* Tabs */}
       <div className="flex space-x-4 space-x-reverse mb-6 border-b border-gray-200">
           <button 
             onClick={() => setActiveTab('clinics')}
@@ -179,8 +176,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">العيادة</th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">الحالة</th>
                     <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">استهلاك AI</th>
-                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">تاريخ الانتهاء</th>
-                    <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">إدارة الاشتراك</th>
                     <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">إجراءات</th>
                     </tr>
                 </thead>
@@ -203,64 +198,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                         )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                           <div className="flex items-center gap-1">
-                               <Bot size={14} className="text-indigo-500" />
-                               <span className="font-bold">{clinic.aiUsageCount || 0}</span>
-                               <span className="text-gray-400">/</span>
-                               <span>{clinic.aiUsageLimit || 50}</span>
-                           </div>
-                           <div className="w-20 bg-gray-200 rounded-full h-1.5 mt-1">
-                              <div 
-                                className="bg-indigo-600 h-1.5 rounded-full" 
-                                style={{ width: `${Math.min(((clinic.aiUsageCount || 0) / (clinic.aiUsageLimit || 50)) * 100, 100)}%` }}
-                              ></div>
-                           </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
-                            <div className="flex items-center gap-1">
-                                <Calendar size={14} className="text-gray-400" />
-                                {formatDate(clinic.subscriptionEndDate)}
-                            </div>
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-center">
-                          <div className="flex justify-center gap-2">
-                             <Button 
-                                variant="secondary"
-                                size="sm"
-                                className="text-xs px-2 py-1 h-8 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100"
-                                onClick={() => openRenewModal(clinic.id)}
-                            >
-                                <RefreshCcw size={14} className="ml-1" />
-                                تجديد
-                            </Button>
-                            
-                            {clinic.subscriptionActive && (
-                                <button
-                                    onClick={() => handleStopSubscription(clinic.id)}
-                                    className="text-xs px-3 py-1 h-8 bg-red-50 text-red-700 border border-red-200 rounded-md hover:bg-red-100 flex items-center gap-1 transition-colors"
-                                    title="إلغاء الاشتراك"
-                                >
-                                    <Ban size={14} />
-                                    إلغاء
-                                </button>
-                            )}
-                          </div>
+                           {clinic.aiUsageCount} / {clinic.aiUsageLimit}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
                             <div className="flex justify-center gap-2">
-                                <button onClick={() => openEditModal(clinic)} className="text-blue-600 hover:text-blue-800 p-1 bg-blue-50 rounded" title="تعديل بيانات العيادة والرصيد">
-                                    <Edit2 size={16} />
-                                </button>
-                                <button onClick={() => handleDelete(clinic.id)} className="text-red-600 hover:text-red-800 p-1 bg-red-50 rounded" title="حذف العيادة نهائياً">
-                                    <Trash2 size={16} />
-                                </button>
+                                <Button variant="secondary" size="sm" className="h-8 text-xs" onClick={() => openRenewModal(clinic.id)}>تجديد</Button>
+                                {clinic.subscriptionActive && <button onClick={() => handleStopSubscription(clinic.id)} className="text-red-600 hover:text-red-800 p-1"><Ban size={18} /></button>}
+                                <button onClick={() => openEditModal(clinic)} className="text-blue-600 hover:text-blue-800 p-1"><Edit2 size={18} /></button>
+                                <button onClick={() => handleDelete(clinic.id)} className="text-red-600 hover:text-red-800 p-1"><Trash2 size={18} /></button>
                             </div>
                         </td>
                     </tr>
                     ))}
-                    {clinics.length === 0 && (
-                        <tr><td colSpan={6} className="text-center py-8 text-gray-500">لا توجد عيادات مسجلة</td></tr>
-                    )}
                 </tbody>
                 </table>
                 </div>
@@ -271,33 +220,46 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
       {/* --- SETTINGS TAB --- */}
       {activeTab === 'settings' && (
           <div className="max-w-3xl bg-white shadow rounded-lg p-6 border border-gray-200">
-              <h3 className="text-lg font-medium text-gray-900 mb-6 flex items-center gap-2">
-                  <Settings size={20} />
-                  إعدادات النظام والدفع
-              </h3>
-              
               <form onSubmit={handleSaveSettings} className="space-y-6">
                   
-                  {/* General Config */}
+                  {/* Logos Section */}
                   <div className="border-b border-gray-100 pb-6">
-                      <h4 className="text-sm font-bold text-gray-900 mb-4 bg-gray-50 p-2 rounded w-fit">المظهر العام</h4>
-                      <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">رابط الشعار المخصص (يظهر في الشريط العلوي)</label>
-                            <input
-                                type="url"
-                                dir="ltr"
-                                placeholder="https://example.com/logo.png"
-                                value={config.customLogoUrl || ''}
-                                onChange={(e) => setConfig({...config, customLogoUrl: e.target.value})}
-                                className="w-full border border-gray-300 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                            />
-                            <p className="text-xs text-gray-500 mt-1">اتركه فارغاً لاستخدام الشعار الافتراضي.</p>
+                      <h4 className="text-sm font-bold text-gray-900 mb-4 bg-gray-50 p-2 rounded w-fit">المظهر والشعارات</h4>
+                      
+                      <div className="grid md:grid-cols-2 gap-6">
+                          <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">الشعار الأساسي (App Logo)</label>
+                                <div className="flex items-center gap-4">
+                                    {config.appLogoUrl ? (
+                                        <img src={config.appLogoUrl} alt="App Logo" className="h-12 w-12 object-contain border rounded" />
+                                    ) : <div className="h-12 w-12 bg-gray-100 rounded border flex items-center justify-center text-xs">Default</div>}
+                                    <label className="cursor-pointer bg-white border border-gray-300 rounded-md px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
+                                        <Upload size={16}/> تغيير
+                                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'appLogoUrl')} />
+                                    </label>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">يظهر مكان أيقونة السماعة في الأعلى.</p>
+                          </div>
+
+                          <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">الشعار الثانوي (Custom Logo)</label>
+                                <div className="flex items-center gap-4">
+                                    {config.customLogoUrl ? (
+                                        <img src={config.customLogoUrl} alt="Custom Logo" className="h-12 w-12 object-contain border rounded" />
+                                    ) : <div className="h-12 w-12 bg-gray-100 rounded border flex items-center justify-center text-xs">None</div>}
+                                    <label className="cursor-pointer bg-white border border-gray-300 rounded-md px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
+                                        <Upload size={16}/> تغيير
+                                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, 'customLogoUrl')} />
+                                    </label>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">يظهر بجانب الشعار الأساسي.</p>
+                          </div>
                       </div>
                   </div>
 
-                  {/* Payment Config */}
+                  {/* Payment Section */}
                   <div className="border-b border-gray-100 pb-6">
-                      <h4 className="text-sm font-bold text-gray-900 mb-4 bg-gray-50 p-2 rounded w-fit">إعدادات الدفع (تظهر عند انتهاء الاشتراك)</h4>
+                      <h4 className="text-sm font-bold text-gray-900 mb-4 bg-gray-50 p-2 rounded w-fit">إعدادات الدفع</h4>
                       <div className="grid gap-4">
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">تعليمات الدفع</label>
@@ -309,63 +271,24 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">رابط صورة الباركود (QR Code)</label>
-                            <input
-                                type="url"
-                                dir="ltr"
-                                value={config.paymentBarcodeUrl}
-                                onChange={(e) => setConfig({...config, paymentBarcodeUrl: e.target.value})}
-                                className="w-full border border-gray-300 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                            <label className="block text-sm font-medium text-gray-700 mb-1">صورة الباركود (QR Code)</label>
+                            <input 
+                                type="file" 
+                                accept="image/*"
+                                onChange={(e) => handleFileUpload(e, 'paymentBarcodeUrl')}
+                                className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary-50 file:text-primary-700 hover:file:bg-primary-100"
                             />
+                            {config.paymentBarcodeUrl && <img src={config.paymentBarcodeUrl} alt="QR" className="h-20 object-contain mt-2 border rounded" />}
                         </div>
                       </div>
                   </div>
 
-                  {/* Social & Contact */}
+                  {/* Social Section */}
                   <div className="border-b border-gray-100 pb-6">
-                      <h4 className="text-sm font-bold text-gray-900 mb-4 bg-gray-50 p-2 rounded w-fit">روابط التواصل والدعم الفني</h4>
+                      <h4 className="text-sm font-bold text-gray-900 mb-4 bg-gray-50 p-2 rounded w-fit">التواصل</h4>
                       <div className="grid md:grid-cols-2 gap-4">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">رقم الواتساب (للدعم الفني)</label>
-                            <input
-                                type="text"
-                                dir="ltr"
-                                placeholder="9647700000000"
-                                value={config.supportWhatsapp}
-                                onChange={(e) => setConfig({...config, supportWhatsapp: e.target.value})}
-                                className="w-full border border-gray-300 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">رابط فيسبوك</label>
-                            <input
-                                type="url"
-                                dir="ltr"
-                                value={config.socialLinks?.facebook || ''}
-                                onChange={(e) => setConfig({...config, socialLinks: {...config.socialLinks, facebook: e.target.value}})}
-                                className="w-full border border-gray-300 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">رابط انستغرام</label>
-                            <input
-                                type="url"
-                                dir="ltr"
-                                value={config.socialLinks?.instagram || ''}
-                                onChange={(e) => setConfig({...config, socialLinks: {...config.socialLinks, instagram: e.target.value}})}
-                                className="w-full border border-gray-300 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">رابط يوتيوب</label>
-                            <input
-                                type="url"
-                                dir="ltr"
-                                value={config.socialLinks?.youtube || ''}
-                                onChange={(e) => setConfig({...config, socialLinks: {...config.socialLinks, youtube: e.target.value}})}
-                                className="w-full border border-gray-300 rounded-md py-2 px-3 focus:outline-none focus:ring-2 focus:ring-primary-500"
-                            />
-                        </div>
+                        <div><label className="text-sm font-medium text-gray-700">واتساب</label><input type="text" dir="ltr" value={config.supportWhatsapp} onChange={(e) => setConfig({...config, supportWhatsapp: e.target.value})} className="w-full border rounded px-3 py-2" /></div>
+                        <div><label className="text-sm font-medium text-gray-700">فيسبوك</label><input type="url" dir="ltr" value={config.socialLinks?.facebook} onChange={(e) => setConfig({...config, socialLinks: {...config.socialLinks, facebook: e.target.value}})} className="w-full border rounded px-3 py-2" /></div>
                       </div>
                   </div>
 
@@ -380,119 +303,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ onLogout }) => {
           </div>
       )}
 
-      {/* --- ADD/EDIT MODAL --- */}
-      <Modal 
-        isOpen={isModalOpen} 
-        onClose={() => setIsModalOpen(false)} 
-        title={modalMode === 'add' ? 'إضافة عيادة جديدة' : 'تعديل بيانات العيادة'}
-      >
+      {/* Modals for Add/Edit/Renew are here (simplified in logic above) */}
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={modalMode === 'add' ? 'إضافة عيادة' : 'تعديل عيادة'}>
         <form onSubmit={handleFormSubmit} className="space-y-4">
-            <div>
-                <label className="block text-sm font-medium text-gray-700">اسم العيادة</label>
-                <input 
-                    type="text" 
-                    required 
-                    value={formData.name}
-                    onChange={(e) => setFormData({...formData, name: e.target.value})}
-                    className="mt-1 block w-full border border-gray-300 rounded-md py-2 px-3 focus:ring-primary-500 focus:border-primary-500"
-                />
-            </div>
-            <div>
-                <label className="block text-sm font-medium text-gray-700">البريد الإلكتروني</label>
-                <input 
-                    type="email" 
-                    required 
-                    dir="ltr"
-                    value={formData.email}
-                    onChange={(e) => setFormData({...formData, email: e.target.value})}
-                    className="mt-1 block w-full border border-gray-300 rounded-md py-2 px-3 focus:ring-primary-500 focus:border-primary-500"
-                />
-            </div>
-            <div>
-                 <label className="block text-sm font-medium text-gray-700">كلمة المرور</label>
-                 <input 
-                    type="text" 
-                    required={modalMode === 'add'}
-                    placeholder={modalMode === 'edit' ? "اتركه فارغاً إذا لا تريد التغيير" : "أدخل كلمة المرور"}
-                    value={formData.password}
-                    onChange={(e) => setFormData({...formData, password: e.target.value})}
-                    className="mt-1 block w-full border border-gray-300 rounded-md py-2 px-3 focus:ring-primary-500 focus:border-primary-500" 
-                    dir="ltr" 
-                />
-            </div>
+            <input type="text" placeholder="اسم العيادة" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full border rounded px-3 py-2"/>
+            <input type="email" placeholder="البريد" required dir="ltr" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full border rounded px-3 py-2"/>
+            <input type="text" placeholder="كلمة المرور" dir="ltr" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full border rounded px-3 py-2"/>
             
-            {/* AI Limit Field (Only in Edit Mode usually, but good for Add too) */}
-            <div className="pt-2 border-t border-gray-100">
-                 <label className="block text-sm font-medium text-indigo-700 mb-1">
-                    <span className="flex items-center gap-1"><Bot size={14}/> رصيد الذكاء الاصطناعي (شهرياً)</span>
-                 </label>
-                 <input 
-                    type="number" 
-                    min="0"
-                    required
-                    value={formData.aiUsageLimit}
-                    onChange={(e) => setFormData({...formData, aiUsageLimit: e.target.value})}
-                    className="mt-1 block w-full border border-indigo-200 rounded-md py-2 px-3 focus:ring-indigo-500 focus:border-indigo-500 bg-indigo-50" 
-                    dir="ltr" 
-                />
+            <div className="pt-2 border-t">
+                 <label className="block text-sm font-medium text-indigo-700 mb-1">رصيد AI</label>
+                 <input type="number" value={formData.aiUsageLimit} onChange={e => setFormData({...formData, aiUsageLimit: e.target.value})} className="w-full border rounded px-3 py-2 bg-indigo-50" dir="ltr" />
             </div>
 
-            <div className="pt-4">
-                <Button type="submit" className="w-full">حفظ البيانات</Button>
-            </div>
+            <Button type="submit" className="w-full">حفظ</Button>
         </form>
       </Modal>
 
-      {/* --- RENEWAL MODAL --- */}
-      <Modal 
-        isOpen={isRenewModalOpen} 
-        onClose={() => setIsRenewModalOpen(false)} 
-        title="تجديد / تمديد الاشتراك"
-      >
-          <div className="space-y-4">
-              <p className="text-sm text-gray-600">اختر مدة التجديد للعيادة المحددة:</p>
-              
-              <div className="grid grid-cols-2 gap-3">
-                  <button 
-                    onClick={() => handleRenew(7)}
-                    className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-green-50 hover:border-green-300 transition"
-                  >
-                      <Clock className="text-green-600 mb-1" />
-                      <span className="font-bold text-gray-900">تجريبي (أسبوع)</span>
-                      <span className="text-xs text-gray-500">7 أيام</span>
-                  </button>
-
-                  <button 
-                    onClick={() => handleRenew(30)}
-                    className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-blue-50 hover:border-blue-300 transition"
-                  >
-                      <Calendar className="text-blue-600 mb-1" />
-                      <span className="font-bold text-gray-900">شهري</span>
-                      <span className="text-xs text-gray-500">30 يوم</span>
-                  </button>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-gray-100">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">مدة مخصصة (بالأيام)</label>
-                  <div className="flex gap-2">
-                      <input 
-                        type="number" 
-                        placeholder="عدد الأيام" 
-                        className="flex-1 border border-gray-300 rounded-md px-3"
-                        value={customDays}
-                        onChange={(e) => setCustomDays(e.target.value)}
-                      />
-                      <Button 
-                        onClick={() => handleRenew(parseInt(customDays) || 0)}
-                        disabled={!customDays || parseInt(customDays) <= 0}
-                      >
-                          تفعيل
-                      </Button>
-                  </div>
-              </div>
+      <Modal isOpen={isRenewModalOpen} onClose={() => setIsRenewModalOpen(false)} title="تجديد الاشتراك">
+          <div className="space-y-4 flex justify-center gap-2">
+              <Button variant="secondary" onClick={() => handleRenew(7)}>أسبوع</Button>
+              <Button variant="secondary" onClick={() => handleRenew(30)}>شهر</Button>
           </div>
       </Modal>
-
     </Layout>
   );
 };

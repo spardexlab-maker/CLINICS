@@ -1,7 +1,6 @@
-
 import React, { useEffect, useState } from 'react';
 import { dbService, SystemConfig } from '../services/dbService';
-import { LogOut, Stethoscope, LayoutDashboard, ShieldCheck, Banknote } from 'lucide-react';
+import { LogOut, Stethoscope, ShieldCheck, LayoutDashboard, Banknote } from 'lucide-react';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -12,13 +11,14 @@ interface LayoutProps {
 const Layout: React.FC<LayoutProps> = ({ children, title, onLogout }) => {
   const clinic = dbService.getCurrentClinic();
   const isAdmin = clinic?.role === 'admin';
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
+  const [config, setConfig] = useState<SystemConfig | null>(null);
 
   useEffect(() => {
-    const config = dbService.getSystemConfig();
-    if (config.customLogoUrl) {
-        setLogoUrl(config.customLogoUrl);
-    }
+    const init = async () => {
+        const c = await dbService.getSystemConfig();
+        setConfig(c);
+    };
+    init();
   }, []);
 
   const handleLogoutClick = () => {
@@ -37,15 +37,24 @@ const Layout: React.FC<LayoutProps> = ({ children, title, onLogout }) => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             <div className="flex items-center gap-3">
-              {/* Default App Logo - Always Visible */}
-              <div className={`p-2 rounded-lg text-white ${isAdmin ? 'bg-purple-700' : 'bg-primary-600'}`}>
-                  {isAdmin ? <ShieldCheck size={24} /> : <Stethoscope size={24} />}
-              </div>
+              
+              {/* App Logo (Dynamic or Default) */}
+              {config?.appLogoUrl ? (
+                  <img 
+                    src={config.appLogoUrl} 
+                    alt="App Logo" 
+                    className="h-10 w-10 object-contain rounded-lg border border-gray-100" 
+                  />
+              ) : (
+                  <div className={`p-2 rounded-lg text-white ${isAdmin ? 'bg-purple-700' : 'bg-primary-600'}`}>
+                      {isAdmin ? <ShieldCheck size={24} /> : <Stethoscope size={24} />}
+                  </div>
+              )}
 
-              {/* Custom Logo - Side by Side if exists */}
-              {logoUrl && (
+              {/* Custom Logo (Secondary) */}
+              {config?.customLogoUrl && (
                  <img 
-                    src={logoUrl} 
+                    src={config.customLogoUrl} 
                     alt="Custom Logo" 
                     className="h-10 w-auto rounded object-contain border border-gray-100 bg-white" 
                  />
@@ -58,7 +67,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title, onLogout }) => {
             </div>
             
             <div className="flex items-center gap-4">
-              {/* Only show Dashboard link if not admin, or different dashboard for admin */}
+              {/* Dashboard Link (Not for Admin) */}
               {!isAdmin && (
                 <>
                   <button 
@@ -97,7 +106,7 @@ const Layout: React.FC<LayoutProps> = ({ children, title, onLogout }) => {
                 className="flex items-center gap-2 text-red-600 hover:text-red-700 transition-colors"
               >
                 <LogOut size={20} />
-                <span className="hidden sm:inline">تسجيل خروج</span>
+                <span className="hidden sm:inline">خروج</span>
               </button>
             </div>
           </div>

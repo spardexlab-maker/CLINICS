@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">نظام ادارة العيادات الذكي</string>
+    <string name="title_activity_main">IraqiCare</string>
+    <string name="package_name">com.iraqicare.app</string>
+    <string name="custom_url_scheme">com.iraqicare.app</string>
+</resources>

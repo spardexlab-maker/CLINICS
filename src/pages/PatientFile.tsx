@@ -21,10 +21,11 @@ import {
   Droplets,
   ChevronDown,
   ChevronUp,
+  Camera,
   ImageIcon,
   Trash,
   AlertTriangle,
-  Camera
+  AlertOctagon
 } from 'lucide-react';
 
 interface PatientFileProps {
@@ -37,182 +38,125 @@ const PatientFile: React.FC<PatientFileProps> = ({ patientId, onLogout }) => {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [vitals, setVitals] = useState<VitalLog[]>([]);
   const [allMeds, setAllMeds] = useState<string[]>([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   
-  // Vitals Logic
+  // Modals
+  const [isModalOpen, setIsModalOpen] = useState(false);
   const [isVitalModalOpen, setIsVitalModalOpen] = useState(false);
-  const [showVitalHistory, setShowVitalHistory] = useState(false);
-  const [vitalForm, setVitalForm] = useState({
-      bloodPressure: '',
-      heartRate: '',
-      oxygenLevel: '',
-      temperature: '',
-      bloodSugar: ''
-  });
-  
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [editFormData, setEditFormData] = useState({
-    name: '',
-    age: '',
-    phone: '',
-    gender: 'male',
-    bloodType: '',
-    chronicDiseases: ''
-  });
+  
+  // State for Vitals History Toggle
+  const [showVitalHistory, setShowVitalHistory] = useState(false);
 
+  // Forms & State
+  const [vitalForm, setVitalForm] = useState({ bloodPressure: '', heartRate: '', oxygenLevel: '', temperature: '', bloodSugar: '' });
+  const [editFormData, setEditFormData] = useState({ name: '', age: '', phone: '', gender: 'male', bloodType: '', chronicDiseases: '', weight: '' });
+  
+  // Visit Form & Edit Mode
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [hasAllergies, setHasAllergies] = useState(false);
+  const [visitForm, setVisitForm] = useState<{
+    id?: string; diagnosis: string; treatment: string; notes: string; date: string; prescriptionImage: string; allergies: string;
+  }>({ diagnosis: '', treatment: '', notes: '', date: new Date().toISOString().split('T')[0], prescriptionImage: '', allergies: '' });
+
+  // Chat
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [chatMessages, setChatMessages] = useState<AIChatMessage[]>([]);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
-
-  const [visitForm, setVisitForm] = useState<{
-    diagnosis: string;
-    treatment: string;
-    notes: string;
-    date: string;
-    prescriptionImage: string;
-  }>({
-    diagnosis: '',
-    treatment: '',
-    notes: '',
-    date: new Date().toISOString().split('T')[0],
-    prescriptionImage: ''
-  });
-
+  
+  // Med Picker
   const [medSearch, setMedSearch] = useState('');
   const [filteredMeds, setFilteredMeds] = useState<string[]>([]);
   const [showMedList, setShowMedList] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [patientId]);
+  useEffect(() => { loadData(); }, [patientId]);
 
   const loadData = async () => {
     setLoading(true);
     const p = await dbService.getPatientById(patientId);
     if (p) {
       setPatient(p);
-      const v = await dbService.getPatientVisits(patientId);
-      setVisits(v);
-      const vl = await dbService.getPatientVitals(patientId);
-      setVitals(vl);
-      
-      // التعديل هنا: انتظار تحميل الأدوية من السيرفر
-      const meds = await dbService.getMedications(); 
-      setAllMeds(meds);
+      setVisits(await dbService.getPatientVisits(patientId));
+      setVitals(await dbService.getPatientVitals(patientId));
+      setAllMeds(await dbService.getMedications());
       
       setEditFormData({
-        name: p.name,
-        age: p.age.toString(),
-        phone: p.phone,
-        gender: p.gender,
-        bloodType: p.bloodType || '',
-        chronicDiseases: p.chronicDiseases.join(', ')
+        name: p.name, age: p.age.toString(), phone: p.phone || '', gender: p.gender, 
+        bloodType: p.bloodType || '', chronicDiseases: p.chronicDiseases.join(', '), weight: p.weight?.toString() || ''
       });
     }
     setLoading(false);
   };
 
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatMessages, isChatOpen]);
-
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chatMessages, isChatOpen]);
   useEffect(() => {
     if (medSearch) {
-        const matches = allMeds.filter(m => m.toLowerCase().includes(medSearch.toLowerCase()));
-        setFilteredMeds(matches);
+        setFilteredMeds(allMeds.filter(m => m.toLowerCase().includes(medSearch.toLowerCase())));
         setShowMedList(true);
-    } else {
-        setFilteredMeds([]);
-        setShowMedList(false);
-    }
+    } else { setFilteredMeds([]); setShowMedList(false); }
   }, [medSearch, allMeds]);
+
+  const latestVital = vitals.length > 0 ? vitals[0] : null;
+
+  // --- Handlers ---
+  const handleVitalSubmit = async (e: React.FormEvent) => {
+      e.preventDefault(); if (!patient) return;
+      await dbService.addVital({
+          patientId: patient.id, date: new Date().toISOString(),
+          bloodPressure: vitalForm.bloodPressure || '-', heartRate: parseInt(vitalForm.heartRate)||0,
+          oxygenLevel: parseInt(vitalForm.oxygenLevel)||0, temperature: parseFloat(vitalForm.temperature)||0, bloodSugar: parseInt(vitalForm.bloodSugar)||0
+      });
+      await loadData(); setIsVitalModalOpen(false); setVitalForm({ bloodPressure: '', heartRate: '', oxygenLevel: '', temperature: '', bloodSugar: '' });
+  };
 
   const handleVitalChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       setVitalForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
-  const handleVitalSubmit = async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!patient) return;
-
-      await dbService.addVital({
-          patientId: patient.id,
-          date: new Date().toISOString(),
-          bloodPressure: vitalForm.bloodPressure || '-',
-          heartRate: parseInt(vitalForm.heartRate) || 0,
-          oxygenLevel: parseInt(vitalForm.oxygenLevel) || 0,
-          temperature: parseFloat(vitalForm.temperature) || 0,
-          bloodSugar: parseInt(vitalForm.bloodSugar) || 0
-      });
-
-      await loadData();
-      setIsVitalModalOpen(false);
-      setVitalForm({ bloodPressure: '', heartRate: '', oxygenLevel: '', temperature: '', bloodSugar: '' });
+  const openAddVisit = () => {
+      setVisitForm({ diagnosis: '', treatment: '', notes: '', date: new Date().toISOString().split('T')[0], prescriptionImage: '', allergies: '' });
+      setHasAllergies(false);
+      setIsEditMode(false);
+      setIsModalOpen(true);
   };
 
-  const latestVital = vitals.length > 0 ? vitals[0] : null;
-
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!chatInput.trim() || !patient) return;
-
-    // Check Quota Async
-    const canUseAI = await dbService.checkAIQuota(patient.clinicId);
-    
-    if (!canUseAI) {
-        const warningMsg: AIChatMessage = { 
-            role: 'model', 
-            content: "عذراً، لقد تجاوزت الحد المسموح لاستخدام المساعد الذكي لهذا الشهر.", 
-            timestamp: Date.now() 
-        };
-        setChatMessages(prev => [...prev, warningMsg]);
-        return;
-    }
-
-    const userMsg: AIChatMessage = { role: 'user', content: chatInput, timestamp: Date.now() };
-    setChatMessages(prev => [...prev, userMsg]);
-    setChatInput('');
-    setIsAiLoading(true);
-
-    const answer = await geminiService.askMedicalAssistant(userMsg.content, patient, visits);
-
-    const botMsg: AIChatMessage = { role: 'model', content: answer, timestamp: Date.now() };
-    setChatMessages(prev => [...prev, botMsg]);
-    setIsAiLoading(false);
+  const openEditVisit = (visit: Visit) => {
+      setVisitForm({
+          id: visit.id,
+          diagnosis: visit.diagnosis,
+          treatment: visit.treatment,
+          notes: visit.notes,
+          date: visit.date.split('T')[0],
+          prescriptionImage: visit.prescriptionImage || '',
+          allergies: visit.allergies || ''
+      });
+      setHasAllergies(!!visit.allergies);
+      setIsEditMode(true);
+      setIsModalOpen(true);
   };
 
   const handleVisitSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!patient) return;
+    e.preventDefault(); if (!patient) return;
+    const finalAllergies = hasAllergies ? visitForm.allergies : '';
 
-    await dbService.addVisit({
-      clinicId: patient.clinicId,
-      patientId: patient.id,
-      date: visitForm.date,
-      diagnosis: visitForm.diagnosis,
-      treatment: visitForm.treatment,
-      notes: visitForm.notes,
-      prescriptionImage: visitForm.prescriptionImage
-    });
-
-    await loadData();
+    if (isEditMode && visitForm.id) {
+       await dbService.updateVisit(visitForm.id, {
+          diagnosis: visitForm.diagnosis, treatment: visitForm.treatment, notes: visitForm.notes,
+          date: visitForm.date, prescriptionImage: visitForm.prescriptionImage, allergies: finalAllergies
+       });
+    } else {
+       await dbService.addVisit({
+          clinicId: patient.clinicId, patientId: patient.id, date: visitForm.date,
+          diagnosis: visitForm.diagnosis, treatment: visitForm.treatment, notes: visitForm.notes,
+          prescriptionImage: visitForm.prescriptionImage, allergies: finalAllergies
+       });
+    }
+    const v = await dbService.getPatientVisits(patient.id);
+    setVisits(v);
     setIsModalOpen(false);
-    setVisitForm({
-      diagnosis: '',
-      treatment: '',
-      notes: '',
-      date: new Date().toISOString().split('T')[0],
-      prescriptionImage: ''
-    });
-    setMedSearch('');
-  };
-
-  const handleVisitChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    setVisitForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -230,19 +174,24 @@ const PatientFile: React.FC<PatientFileProps> = ({ patientId, onLogout }) => {
     }
   };
 
-  // التعديل هنا: حفظ الدواء الجديد في السحابة
   const addMedicationToVisit = async (med: string) => {
-      const currentTreatment = visitForm.treatment;
-      const newTreatment = currentTreatment ? `${currentTreatment}, ${med}` : med;
-      setVisitForm(prev => ({ ...prev, treatment: newTreatment }));
-      
+      const current = visitForm.treatment;
+      setVisitForm(prev => ({ ...prev, treatment: current ? `${current}, ${med}` : med }));
       if (!allMeds.includes(med)) {
-          await dbService.addMedication(med); // await here
+          await dbService.addMedication(med);
           setAllMeds(prev => [...prev, med]);
       }
-      
-      setMedSearch('');
-      setShowMedList(false);
+      setMedSearch(''); setShowMedList(false);
+  };
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!patient) return;
+    await dbService.updatePatient(patient.id, {
+        name: editFormData.name, age: parseInt(editFormData.age) || 0, phone: editFormData.phone,
+        gender: editFormData.gender as 'male' | 'female', bloodType: editFormData.bloodType,
+        chronicDiseases: editFormData.chronicDiseases ? editFormData.chronicDiseases.split(',').map(s => s.trim()) : []
+    });
+    loadData(); setIsEditModalOpen(false);
   };
 
   const handleEditChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -250,42 +199,45 @@ const PatientFile: React.FC<PatientFileProps> = ({ patientId, onLogout }) => {
     setEditFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!patient) return;
-
-    await dbService.updatePatient(patient.id, {
-        name: editFormData.name,
-        age: parseInt(editFormData.age) || 0,
-        phone: editFormData.phone,
-        gender: editFormData.gender as 'male' | 'female',
-        bloodType: editFormData.bloodType,
-        chronicDiseases: editFormData.chronicDiseases ? editFormData.chronicDiseases.split(',').map(s => s.trim()) : []
-    });
-
-    await loadData();
-    setIsEditModalOpen(false);
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault(); if (!chatInput.trim() || !patient) return;
+    if (!(await dbService.checkAIQuota(patient.clinicId))) {
+        setChatMessages(prev => [...prev, { role: 'model', content: "عذراً، انتهى رصيد الذكاء الاصطناعي لهذا الشهر.", timestamp: Date.now() }]);
+        return;
+    }
+    const userMsg: AIChatMessage = { role: 'user', content: chatInput, timestamp: Date.now() };
+    setChatMessages(prev => [...prev, userMsg]); setChatInput(''); setIsAiLoading(true);
+    const answer = await geminiService.askMedicalAssistant(userMsg.content, patient, visits);
+    setChatMessages(prev => [...prev, { role: 'model', content: answer, timestamp: Date.now() }]);
+    setIsAiLoading(false);
   };
 
-  if (loading || !patient) return <Layout title="جاري التحميل..." onLogout={onLogout}><div className="text-center p-10">جاري جلب البيانات...</div></Layout>;
+  if (loading || !patient) return <Layout title="جاري التحميل..." onLogout={onLogout}><div className="p-10 text-center">جاري جلب البيانات...</div></Layout>;
 
   return (
     <Layout title={`ملف المريض: ${patient.name}`} onLogout={onLogout}>
       <div className="mb-4 flex justify-between items-center">
-        <button 
-          onClick={() => window.location.hash = '#/'}
-          className="flex items-center text-gray-500 hover:text-gray-700 transition-colors"
-        >
-          <ArrowRight size={18} className="ml-1" />
-          العودة للقائمة
-        </button>
-
+        <div className="flex items-center gap-4">
+            <button 
+              onClick={() => window.location.hash = '#/'}
+              className="flex items-center text-gray-500 hover:text-gray-700 transition-colors"
+            >
+              <ArrowRight size={18} className="ml-1" />
+              العودة للقائمة
+            </button>
+            {patient.allergies && (
+                <span className="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-1 border border-red-200">
+                    <AlertOctagon size={16}/> تحسس المريض: {patient.allergies}
+                </span>
+            )}
+        </div>
         <Button onClick={() => setIsVitalModalOpen(true)} className="flex items-center gap-2">
             <Activity size={18} />
             قياس المؤشرات الحيوية
         </Button>
       </div>
 
+      {/* ------------------------- VITALS SECTION RESTORED ------------------------- */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
           <div className="flex justify-between items-center mb-4">
             <h3 className="font-bold text-gray-900 flex items-center gap-2">
@@ -373,530 +325,208 @@ const PatientFile: React.FC<PatientFileProps> = ({ patientId, onLogout }) => {
              </div>
           )}
       </div>
+      {/* ------------------------------------------------------------------------- */}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
         <div className="lg:col-span-1 space-y-6">
-          <div className="bg-white shadow rounded-lg p-6 border border-gray-200 relative">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-medium text-gray-900">البيانات الشخصية</h3>
-              <div className="flex items-center gap-2">
-                 <button 
-                   onClick={() => setIsEditModalOpen(true)}
-                   className="text-gray-400 hover:text-primary-600 transition-colors"
-                   title="تعديل المعلومات"
-                 >
-                    <Edit size={16} />
-                 </button>
-                 <span className={`px-2 py-1 text-xs rounded-full ${patient.gender === 'male' ? 'bg-blue-100 text-blue-800' : 'bg-pink-100 text-pink-800'}`}>
-                    {patient.gender === 'male' ? 'ذكر' : 'أنثى'}
-                 </span>
-              </div>
+            <div className="bg-white shadow rounded-lg p-6 border border-gray-200 relative">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-bold text-gray-900">البيانات الشخصية</h3>
+                    <button onClick={() => setIsEditModalOpen(true)} className="text-gray-400 hover:text-primary-600">
+                        <Edit size={16}/>
+                    </button>
+                </div>
+                <div className="space-y-3 text-sm">
+                    <div className="flex justify-between border-b pb-2"><span className="text-gray-500">العمر:</span> <span className="font-medium text-gray-900">{patient.age} سنة</span></div>
+                    <div className="flex justify-between border-b pb-2"><span className="text-gray-500">الهاتف:</span> <span className="font-medium text-gray-900" dir="ltr">{patient.phone || 'غير مسجل'}</span></div>
+                    <div className="flex justify-between border-b pb-2"><span className="text-gray-500">فصيلة الدم:</span> <span className="font-medium text-gray-900">{patient.bloodType || '-'}</span></div>
+                    <div className="flex justify-between border-b pb-2"><span className="text-gray-500">الوزن:</span> <span className="font-medium text-gray-900">{patient.weight ? `${patient.weight} كغم` : '-'}</span></div>
+                    <div>
+                        <span className="block text-gray-500 mb-1">الأمراض المزمنة:</span>
+                        <div className="flex flex-wrap gap-1">
+                            {patient.chronicDiseases.length > 0 ? patient.chronicDiseases.map((d, i) => (<span key={i} className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs">{d}</span>)) : <span className="text-gray-400">لا يوجد</span>}
+                        </div>
+                    </div>
+                </div>
             </div>
             
-            <div className="space-y-3 text-sm">
-              <div className="flex justify-between border-b border-gray-100 pb-2">
-                <span className="text-gray-500">العمر:</span>
-                <span className="font-medium text-gray-900">{patient.age} سنة</span>
-              </div>
-              <div className="flex justify-between border-b border-gray-100 pb-2">
-                <span className="text-gray-500">فصيلة الدم:</span>
-                <span className="font-medium text-gray-900">{patient.bloodType || 'غير محدد'}</span>
-              </div>
-              <div className="flex justify-between border-b border-gray-100 pb-2">
-                <span className="text-gray-500">الهاتف:</span>
-                <span className="font-medium text-gray-900" dir="ltr">{patient.phone}</span>
-              </div>
-              <div>
-                <span className="block text-gray-500 mb-1">الأمراض المزمنة:</span>
-                <div className="flex flex-wrap gap-1">
-                  {patient.chronicDiseases.length > 0 ? (
-                     patient.chronicDiseases.map((d, i) => (
-                       <span key={i} className="px-2 py-1 bg-red-50 text-red-700 rounded text-xs border border-red-100">{d}</span>
-                     ))
-                  ) : <span className="text-gray-400">لا يوجد</span>}
+            {/* AI CHAT */}
+            {isChatOpen && (
+                <div className="bg-white border rounded-lg h-96 flex flex-col shadow-md">
+                    <div className="p-3 bg-indigo-50 border-b flex justify-between items-center">
+                        <span className="font-bold text-indigo-900 flex items-center gap-2"><Bot size={18}/> مساعد ذكي</span>
+                        <span className="text-xs bg-white px-2 py-1 rounded text-indigo-500">Gemini</span>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50">
+                        {chatMessages.map((msg, i) => (
+                            <div key={i} className={`p-3 rounded-lg text-sm max-w-[85%] ${msg.role === 'user' ? 'bg-white border self-start rounded-tr-none text-gray-800' : 'bg-indigo-600 text-white self-end rounded-tl-none'}`}>
+                                {msg.content}
+                            </div>
+                        ))}
+                        {isAiLoading && <div className="text-xs text-gray-400 animate-pulse">جاري الكتابة...</div>}
+                        <div ref={chatEndRef}/>
+                    </div>
+                    <div className="p-3 bg-white border-t">
+                        <form onSubmit={handleSendMessage} className="flex gap-2">
+                            <input value={chatInput} onChange={e=>setChatInput(e.target.value)} className="flex-1 border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-indigo-500" placeholder="اسأل عن حالة المريض..."/>
+                            <button type="submit" disabled={!chatInput.trim() || isAiLoading} className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50"><Send size={20}/></button>
+                        </form>
+                    </div>
                 </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-lg p-6 text-white shadow-lg relative overflow-hidden">
-            <div className="relative z-10">
-              <div className="flex items-center gap-2 mb-2">
-                <Bot className="text-yellow-300" />
-                <h3 className="text-lg font-bold">المساعد الطبي الذكي</h3>
-              </div>
-              <p className="text-indigo-100 text-sm mb-4">
-                اسأل الذكاء الاصطناعي عن تاريخ المريض، التفاعلات الدوائية، أو تلخيص الزيارات.
-              </p>
-              <button 
-                onClick={() => setIsChatOpen(!isChatOpen)}
-                className="w-full bg-white text-indigo-600 py-2 rounded-md font-bold text-sm hover:bg-indigo-50 transition shadow-sm"
-              >
-                {isChatOpen ? 'إخفاء المحادثة' : 'بدء محادثة مع الملف'}
-              </button>
-            </div>
-            <div className="absolute -bottom-4 -right-4 w-24 h-24 bg-white opacity-10 rounded-full"></div>
-            <div className="absolute top-0 left-0 w-16 h-16 bg-purple-500 opacity-20 rounded-full blur-xl"></div>
-          </div>
+            )}
+            {!isChatOpen && <button onClick={() => setIsChatOpen(true)} className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold shadow hover:bg-indigo-700 transition">فتح المساعد الذكي</button>}
         </div>
 
         <div className="lg:col-span-2 space-y-6">
-          
-          {isChatOpen && (
-            <div className="bg-white border border-indigo-200 shadow-md rounded-lg flex flex-col h-96">
-              <div className="p-4 border-b border-gray-100 bg-indigo-50 flex justify-between items-center rounded-t-lg">
-                <span className="font-bold text-indigo-900 flex items-center gap-2">
-                   <Bot size={18} />
-                   مساعد الممرض
-                </span>
-                <span className="text-xs text-indigo-500 bg-white px-2 py-1 rounded">Gemini Powered</span>
-              </div>
-              
-              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50">
-                {chatMessages.length === 0 && (
-                   <div className="text-center text-gray-400 text-sm mt-8">
-                     <p>يمكنك طرح أسئلة مثل:</p>
-                     <ul className="mt-2 space-y-1">
-                       <li>"هل أخذ المريض مضادات حيوية سابقاً؟"</li>
-                       <li>"لخص حالة المريض خلال السنة الماضية"</li>
-                       <li>"هل هناك تعارض بين دواء الضغط والسكري؟"</li>
-                     </ul>
-                   </div>
-                )}
-                
-                {chatMessages.map((msg, idx) => (
-                  <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
-                    <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed shadow-sm ${
-                      msg.role === 'user' 
-                        ? 'bg-white text-gray-800 border border-gray-200 rounded-tr-none' 
-                        : msg.content.includes("تجاوزت الحد المسموح") 
-                          ? 'bg-red-50 text-red-800 border border-red-200 rounded-tl-none'
-                          : 'bg-indigo-600 text-white rounded-tl-none'
-                    }`}>
-                        {msg.content.includes("تجاوزت الحد المسموح") && <AlertTriangle size={16} className="inline mr-1 mb-1"/>}
-                        {msg.content}
-                    </div>
-                  </div>
-                ))}
-                
-                {isAiLoading && (
-                  <div className="flex justify-end">
-                    <div className="bg-indigo-600 text-white rounded-2xl rounded-tl-none px-4 py-3 shadow-sm">
-                      <div className="flex gap-1">
-                        <div className="w-2 h-2 bg-white rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-white rounded-full animate-bounce delay-75"></div>
-                        <div className="w-2 h-2 bg-white rounded-full animate-bounce delay-150"></div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-                <div ref={chatEndRef} />
-              </div>
-
-              <div className="p-3 bg-white border-t border-gray-200 rounded-b-lg">
-                <form onSubmit={handleSendMessage} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    placeholder="اكتب سؤالك هنا..."
-                    className="flex-1 border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition"
-                  />
-                  <button 
-                    type="submit" 
-                    disabled={isAiLoading || !chatInput.trim()}
-                    className="bg-indigo-600 text-white p-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-                  >
-                    <Send size={20} className={isAiLoading ? 'opacity-0' : ''} />
-                  </button>
-                </form>
-              </div>
-            </div>
-          )}
-
           <div className="bg-white shadow rounded-lg overflow-hidden border border-gray-200">
-            <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-              <h3 className="text-lg font-medium text-gray-900 flex items-center gap-2">
-                <History size={20} className="text-gray-500" />
-                سجل الزيارات
-              </h3>
-              <Button 
-                variant="secondary" 
-                className="text-xs"
-                onClick={() => setIsModalOpen(true)}
-              >
-                <PlusCircle size={16} className="ml-1" />
-                زيارة جديدة
+            <div className="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
+              <h3 className="text-lg font-medium flex gap-2 text-gray-900"><History size={20} className="text-gray-500"/> سجل الزيارات</h3>
+              <Button variant="secondary" className="text-xs" onClick={openAddVisit}>
+                <PlusCircle size={16} className="ml-1"/> زيارة جديدة
               </Button>
             </div>
-            
             <ul className="divide-y divide-gray-200">
               {visits.map((visit) => (
                 <li key={visit.id} className="p-6 hover:bg-gray-50 transition-colors">
-                  <div className="flex flex-col sm:flex-row justify-between mb-2">
-                    <div className="flex items-center gap-2 mb-2 sm:mb-0">
-                      <Calendar size={16} className="text-primary-500" />
-                      <span className="text-sm font-bold text-gray-900">{visit.date}</span>
+                  <div className="flex justify-between items-start mb-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                      <div className="flex items-center gap-2 text-primary-600 font-bold">
+                          <Calendar size={16} /> <span>{visit.date}</span>
+                      </div>
+                      <span className="bg-blue-100 text-blue-800 px-2 rounded text-xs">{visit.diagnosis}</span>
+                      {visit.allergies && (
+                          <span className="bg-red-100 text-red-800 px-2 rounded text-xs border border-red-200 flex items-center gap-1 w-fit">
+                              <AlertOctagon size={12}/> تحسس: {visit.allergies}
+                          </span>
+                      )}
                     </div>
                     <div className="flex gap-2">
                         {visit.prescriptionImage && (
-                            <button
-                                onClick={() => setPreviewImage(visit.prescriptionImage || null)}
-                                className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 hover:bg-purple-200 transition"
-                            >
-                                <ImageIcon size={12} />
-                                عرض الوصفة
+                            <button onClick={() => setPreviewImage(visit.prescriptionImage || null)} className="text-purple-600 hover:bg-purple-50 p-1 rounded" title="عرض الوصفة">
+                                <ImageIcon size={18}/>
                             </button>
                         )}
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                        {visit.diagnosis}
-                        </span>
+                        <button onClick={() => openEditVisit(visit)} className="text-blue-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded" title="تعديل">
+                            <Edit size={18}/>
+                        </button>
                     </div>
                   </div>
-                  
-                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-gray-50 p-3 rounded border border-gray-100">
-                      <p className="text-xs text-gray-500 mb-1 flex items-center gap-1">
-                        <Activity size={12} />
-                        العلاج
-                      </p>
-                      <p className="text-sm text-gray-800 font-medium">{visit.treatment}</p>
-                    </div>
-                    <div className="bg-yellow-50 p-3 rounded border border-yellow-100">
-                      <p className="text-xs text-yellow-600 mb-1 flex items-center gap-1">
-                        <FileText size={12} />
-                        ملاحظات
-                      </p>
-                      <p className="text-sm text-gray-700">{visit.notes}</p>
-                    </div>
+                  <div className="mt-3 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                      <p className="text-xs text-gray-500 mb-1 font-bold">العلاج:</p>
+                      <p className="text-sm text-gray-900 font-medium whitespace-pre-wrap">{visit.treatment}</p>
                   </div>
+                  {visit.notes && <p className="text-sm text-gray-500 mt-2 italic">ملاحظات: {visit.notes}</p>}
                 </li>
               ))}
-              {visits.length === 0 && (
-                <li className="p-8 text-center text-gray-500">
-                  لا توجد زيارات سابقة لهذا المريض.
-                </li>
-              )}
+              {visits.length === 0 && <li className="p-8 text-center text-gray-500">لا توجد زيارات مسجلة.</li>}
             </ul>
           </div>
-
-          <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title="إضافة زيارة جديدة">
-             <form onSubmit={handleVisitSubmit} className="space-y-4">
-                <div>
-                   <label className="block text-sm font-medium text-gray-700">تاريخ الزيارة</label>
-                   <input 
-                     type="date"
-                     name="date"
-                     required
-                     value={visitForm.date}
-                     onChange={handleVisitChange}
-                     className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                   />
-                </div>
-                <div>
-                   <label className="block text-sm font-medium text-gray-700">التشخيص</label>
-                   <input 
-                     type="text"
-                     name="diagnosis"
-                     required
-                     value={visitForm.diagnosis}
-                     onChange={handleVisitChange}
-                     className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                   />
-                </div>
-                
-                <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">العلاج الموصوف</label>
-                    <div className="relative mb-2">
-                        <div className="flex gap-2">
-                             <input 
-                                type="text"
-                                placeholder="ابحث عن دواء أو اكتب دواء جديد..."
-                                value={medSearch}
-                                onChange={(e) => setMedSearch(e.target.value)}
-                                className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:ring-primary-500 focus:border-primary-500"
-                            />
-                            {medSearch && filteredMeds.length === 0 && (
-                                <button
-                                    type="button"
-                                    onClick={() => addMedicationToVisit(medSearch)}
-                                    className="bg-green-600 text-white px-3 py-1 rounded text-sm hover:bg-green-700 whitespace-nowrap"
-                                >
-                                    إضافة وحفظ
-                                </button>
-                            )}
-                        </div>
-                        {showMedList && filteredMeds.length > 0 && (
-                            <ul className="absolute z-20 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-48 overflow-y-auto mt-1">
-                                {filteredMeds.map((med, i) => (
-                                    <li 
-                                        key={i} 
-                                        onClick={() => addMedicationToVisit(med)}
-                                        className="px-3 py-2 hover:bg-primary-50 cursor-pointer text-sm text-gray-700 flex justify-between"
-                                    >
-                                        {med}
-                                        <PlusCircle size={14} className="text-gray-400" />
-                                    </li>
-                                ))}
-                            </ul>
-                        )}
-                    </div>
-                    <textarea 
-                        name="treatment"
-                        required
-                        rows={2}
-                        value={visitForm.treatment}
-                        onChange={handleVisitChange}
-                        placeholder="يمكنك تعديل القائمة هنا وإضافة الجرعات..."
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm bg-white text-black font-bold"
-                    />
-                </div>
-
-                <div>
-                   <label className="block text-sm font-medium text-gray-700">ملاحظات الممرض</label>
-                   <textarea 
-                     name="notes"
-                     rows={2}
-                     value={visitForm.notes}
-                     onChange={handleVisitChange}
-                     className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                   />
-                </div>
-
-                <div>
-                   <label className="block text-sm font-medium text-gray-700 mb-1">صورة الوصفة الطبية (اختياري)</label>
-                   <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-300 border-dashed rounded-md relative hover:bg-gray-50 transition">
-                      <div className="space-y-1 text-center">
-                        {visitForm.prescriptionImage ? (
-                            <div className="relative">
-                                <img src={visitForm.prescriptionImage} alt="Preview" className="mx-auto h-32 object-contain" />
-                                <button
-                                    type="button"
-                                    onClick={() => setVisitForm(prev => ({ ...prev, prescriptionImage: '' }))}
-                                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600"
-                                >
-                                    <Trash size={14} />
-                                </button>
-                            </div>
-                        ) : (
-                            <>
-                                <Camera className="mx-auto h-12 w-12 text-gray-400" />
-                                <div className="flex text-sm text-gray-600 justify-center">
-                                    <label htmlFor="file-upload" className="relative cursor-pointer bg-white rounded-md font-medium text-primary-600 hover:text-primary-500 focus-within:outline-none">
-                                        <span>رفع صورة</span>
-                                        <input 
-                                            id="file-upload" 
-                                            name="file-upload" 
-                                            type="file" 
-                                            className="sr-only" 
-                                            accept="image/*"
-                                            onChange={handleImageUpload}
-                                        />
-                                    </label>
-                                </div>
-                                <p className="text-xs text-gray-500">PNG, JPG, GIF up to 5MB</p>
-                            </>
-                        )}
-                      </div>
-                   </div>
-                </div>
-
-                <div className="mt-5 sm:mt-6">
-                   <Button type="submit" className="w-full">
-                     حفظ الزيارة
-                   </Button>
-                </div>
-             </form>
-          </Modal>
-
-          <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="تعديل بيانات المريض">
-            <form onSubmit={handleEditSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">اسم المريض</label>
-                <input
-                  type="text"
-                  name="name"
-                  required
-                  value={editFormData.name}
-                  onChange={handleEditChange}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                />
-              </div>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">العمر</label>
-                  <input
-                    type="number"
-                    name="age"
-                    required
-                    value={editFormData.age}
-                    onChange={handleEditChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">الجنس</label>
-                  <select
-                    name="gender"
-                    value={editFormData.gender}
-                    onChange={handleEditChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                  >
-                    <option value="male">ذكر</option>
-                    <option value="female">أنثى</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">رقم الهاتف</label>
-                  <input
-                    type="text"
-                    name="phone"
-                    required
-                    dir="ltr"
-                    value={editFormData.phone}
-                    onChange={handleEditChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700">فصيلة الدم</label>
-                  <input
-                    type="text"
-                    name="bloodType"
-                    dir="ltr"
-                    value={editFormData.bloodType}
-                    onChange={handleEditChange}
-                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">الأمراض المزمنة</label>
-                <input
-                  type="text"
-                  name="chronicDiseases"
-                  placeholder="مثال: سكري, ضغط"
-                  value={editFormData.chronicDiseases}
-                  onChange={handleEditChange}
-                  className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-primary-500 focus:border-primary-500 sm:text-sm"
-                />
-              </div>
-
-              <div className="mt-5 sm:mt-6">
-                <Button type="submit" className="w-full">
-                  حفظ التعديلات
-                </Button>
-              </div>
-            </form>
-          </Modal>
-
-          <Modal isOpen={isVitalModalOpen} onClose={() => setIsVitalModalOpen(false)} title="تسجيل مؤشرات حيوية جديدة">
-             <form onSubmit={handleVitalSubmit} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">ضغط الدم (mmHg)</label>
-                        <input 
-                            type="text" 
-                            name="bloodPressure"
-                            placeholder="120/80"
-                            dir="ltr"
-                            value={vitalForm.bloodPressure}
-                            onChange={handleVitalChange}
-                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-primary-500 focus:border-primary-500"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">النبض (bpm)</label>
-                        <input 
-                            type="number" 
-                            name="heartRate"
-                            placeholder="70"
-                            value={vitalForm.heartRate}
-                            onChange={handleVitalChange}
-                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-primary-500 focus:border-primary-500"
-                        />
-                    </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">نسبة الأوكسجين (%)</label>
-                        <input 
-                            type="number" 
-                            name="oxygenLevel"
-                            placeholder="98"
-                            value={vitalForm.oxygenLevel}
-                            onChange={handleVitalChange}
-                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-primary-500 focus:border-primary-500"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">الحرارة (C°)</label>
-                        <input 
-                            type="number"
-                            step="0.1" 
-                            name="temperature"
-                            placeholder="37.0"
-                            value={vitalForm.temperature}
-                            onChange={handleVitalChange}
-                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-primary-500 focus:border-primary-500"
-                        />
-                    </div>
-                </div>
-
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">مستوى السكر (mg/dL)</label>
-                    <input 
-                        type="number" 
-                        name="bloodSugar"
-                        placeholder="100"
-                        value={vitalForm.bloodSugar}
-                        onChange={handleVitalChange}
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:ring-primary-500 focus:border-primary-500"
-                    />
-                </div>
-
-                <div className="mt-5 sm:mt-6">
-                    <Button type="submit" className="w-full flex items-center justify-center gap-2">
-                        <Activity size={18} />
-                        حفظ القراءة
-                    </Button>
-                </div>
-             </form>
-          </Modal>
-
-          {previewImage && (
-              <div 
-                className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-90 p-4"
-                onClick={() => setPreviewImage(null)}
-              >
-                  <div className="relative max-w-4xl w-full h-full flex flex-col items-center justify-center">
-                      <button 
-                        onClick={() => setPreviewImage(null)}
-                        className="absolute top-4 right-4 text-white hover:text-gray-300"
-                      >
-                          <Trash size={32} className="rotate-45" /> {/* Close Icon */}
-                      </button>
-                      <img 
-                        src={previewImage} 
-                        alt="Rx Fullscreen" 
-                        className="max-h-[90vh] max-w-full object-contain rounded-lg"
-                      />
-                      <p className="text-white mt-4 text-sm">اضغط في أي مكان للإغلاق</p>
-                  </div>
-              </div>
-          )}
-
         </div>
       </div>
+
+      {/* Visit Modal (Add/Edit) */}
+      <Modal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} title={isEditMode ? "تعديل زيارة" : "إضافة زيارة جديدة"}>
+         <form onSubmit={handleVisitSubmit} className="space-y-4">
+            <div>
+                <label className="block text-sm font-medium text-gray-700">تاريخ الزيارة</label>
+                <input type="date" value={visitForm.date} onChange={e => setVisitForm({...visitForm, date: e.target.value})} className="mt-1 block w-full border border-gray-300 p-2 rounded-md shadow-sm" required />
+            </div>
+            
+            <div className="bg-red-50 p-3 rounded-lg border border-red-100">
+                <label className="flex items-center gap-2 text-sm font-bold text-red-800 mb-2"><AlertOctagon size={16} /> هل يوجد تحسس في هذه الزيارة؟</label>
+                <div className="flex gap-4 mb-2">
+                    <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={hasAllergies} onChange={() => setHasAllergies(true)} className="text-red-600"/> <span className="text-sm">نعم</span></label>
+                    <label className="flex items-center gap-1 cursor-pointer"><input type="radio" checked={!hasAllergies} onChange={() => setHasAllergies(false)} className="text-gray-600"/> <span className="text-sm">لا</span></label>
+                </div>
+                {hasAllergies && <input type="text" placeholder="اكتب نوع التحسس (مثل: Penicillin)..." value={visitForm.allergies} onChange={e => setVisitForm({...visitForm, allergies: e.target.value})} className="w-full border border-red-300 rounded-md p-2 text-sm focus:ring-red-500" />}
+            </div>
+
+            <div>
+                <label className="block text-sm font-medium text-gray-700">التشخيص</label>
+                <input type="text" placeholder="مثال: التهاب لوزتين" value={visitForm.diagnosis} onChange={e => setVisitForm({...visitForm, diagnosis: e.target.value})} className="mt-1 block w-full border border-gray-300 p-2 rounded-md" required />
+            </div>
+            
+            {/* Med Picker */}
+            <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">العلاج الموصوف</label>
+                <div className="relative mb-2">
+                    <input type="text" placeholder="ابحث عن دواء..." value={medSearch} onChange={e => setMedSearch(e.target.value)} className="w-full border border-gray-300 p-2 rounded-md text-sm" />
+                    {showMedList && filteredMeds.length > 0 && (
+                        <ul className="absolute z-20 w-full bg-white border border-gray-200 rounded-md shadow-lg max-h-40 overflow-y-auto mt-1">
+                            {filteredMeds.map((m,i) => (
+                                <li key={i} onClick={() => addMedicationToVisit(m)} className="px-3 py-2 hover:bg-gray-100 cursor-pointer text-sm border-b last:border-0 flex justify-between items-center">
+                                    {m} <PlusCircle size={14} className="text-green-600"/>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+                <textarea rows={3} value={visitForm.treatment} onChange={e => setVisitForm({...visitForm, treatment: e.target.value})} className="w-full border border-gray-300 p-2 rounded-md font-bold text-gray-900 bg-gray-50" placeholder="قائمة العلاجات ستظهر هنا..." required />
+            </div>
+
+            <div>
+                <label className="block text-sm font-medium text-gray-700">ملاحظات الممرض</label>
+                <textarea rows={2} value={visitForm.notes} onChange={e => setVisitForm({...visitForm, notes: e.target.value})} className="mt-1 block w-full border border-gray-300 p-2 rounded-md" />
+            </div>
+            
+            <div className="border-t border-gray-200 pt-3">
+                <label className="block text-sm font-medium text-gray-700 mb-1">صورة الوصفة الطبية (اختياري)</label>
+                <div className="flex items-center justify-center w-full">
+                    <label htmlFor="dropzone-file" className="flex flex-col items-center justify-center w-full h-32 border-2 border-gray-300 border-dashed rounded-lg cursor-pointer bg-gray-50 hover:bg-gray-100">
+                        <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                            <Camera className="w-8 h-8 mb-2 text-gray-500" />
+                            <p className="text-xs text-gray-500">اضغط لرفع صورة (PNG, JPG)</p>
+                        </div>
+                        <input id="dropzone-file" type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
+                    </label>
+                </div>
+                {visitForm.prescriptionImage && <p className="text-xs text-green-600 mt-1 text-center">✅ تم اختيار الصورة</p>}
+            </div>
+
+            <div className="mt-4 pt-2 border-t border-gray-100">
+                <Button type="submit" className="w-full">{isEditMode ? 'حفظ التعديلات' : 'حفظ الزيارة'}</Button>
+            </div>
+         </form>
+      </Modal>
+
+      {/* Edit Patient Modal */}
+      <Modal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} title="تعديل بيانات المريض">
+        <form onSubmit={handleEditSubmit} className="space-y-4">
+          <div><label className="block text-sm font-medium text-gray-700">الاسم</label><input type="text" name="name" required value={editFormData.name} onChange={handleEditChange} className="mt-1 block w-full border p-2 rounded-md" /></div>
+          <div className="grid grid-cols-2 gap-4">
+            <div><label className="block text-sm font-medium text-gray-700">العمر</label><input type="number" name="age" required value={editFormData.age} onChange={handleEditChange} className="mt-1 block w-full border p-2 rounded-md" /></div>
+            <div><label className="block text-sm font-medium text-gray-700">الوزن</label><input type="number" name="weight" value={editFormData.weight} onChange={handleEditChange} className="mt-1 block w-full border p-2 rounded-md" /></div>
+          </div>
+          <div><label className="block text-sm font-medium text-gray-700">الهاتف</label><input type="text" name="phone" dir="ltr" value={editFormData.phone} onChange={handleEditChange} className="mt-1 block w-full border p-2 rounded-md" /></div>
+          <div><label className="block text-sm font-medium text-gray-700">الأمراض المزمنة</label><input type="text" name="chronicDiseases" value={editFormData.chronicDiseases} onChange={handleEditChange} className="mt-1 block w-full border p-2 rounded-md" /></div>
+          <Button type="submit" className="w-full mt-4">حفظ التعديلات</Button>
+        </form>
+      </Modal>
+
+      {/* Vitals Modal */}
+      <Modal isOpen={isVitalModalOpen} onClose={() => setIsVitalModalOpen(false)} title="تسجيل مؤشرات حيوية">
+          <form onSubmit={handleVitalSubmit} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                  <div><label className="text-sm">ضغط الدم</label><input placeholder="120/80" name="bloodPressure" value={vitalForm.bloodPressure} onChange={handleVitalChange} className="w-full border p-2 rounded" dir="ltr"/></div>
+                  <div><label className="text-sm">السكري</label><input type="number" name="bloodSugar" value={vitalForm.bloodSugar} onChange={handleVitalChange} className="w-full border p-2 rounded"/></div>
+                  <div><label className="text-sm">النبض</label><input type="number" name="heartRate" value={vitalForm.heartRate} onChange={handleVitalChange} className="w-full border p-2 rounded"/></div>
+                  <div><label className="text-sm">الاوكسجين</label><input type="number" name="oxygenLevel" value={vitalForm.oxygenLevel} onChange={handleVitalChange} className="w-full border p-2 rounded"/></div>
+                  <div><label className="text-sm">الحرارة</label><input type="number" step="0.1" name="temperature" value={vitalForm.temperature} onChange={handleVitalChange} className="w-full border p-2 rounded"/></div>
+              </div>
+              <Button type="submit" className="w-full mt-2">حفظ القراءة</Button>
+          </form>
+      </Modal>
+
+      {/* Image Preview Modal */}
+      {previewImage && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-90 p-4" onClick={() => setPreviewImage(null)}>
+              <div className="relative max-w-4xl w-full h-full flex flex-col items-center justify-center">
+                  <button onClick={() => setPreviewImage(null)} className="absolute top-4 right-4 text-white hover:text-gray-300"><Trash size={32} className="rotate-45" /></button>
+                  <img src={previewImage} alt="Rx Fullscreen" className="max-h-[90vh] max-w-full object-contain rounded-lg"/>
+              </div>
+          </div>
+      )}
     </Layout>
   );
 };
-
 export default PatientFile;
