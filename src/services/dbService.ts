@@ -2,14 +2,13 @@ import { supabase } from '../supabaseClient';
 import imageCompression from 'browser-image-compression';
 import { Patient, Visit, Clinic, VitalLog, FinancialTransaction, SystemConfig } from '../types';
 
-const SYSTEM_CONFIG_KEY = 'iraqicare_config';
 const CURRENT_SESSION_KEY = 'iraqicare_session';
 
-// --- أدوات مساعدة ---
+// --- أدوات مساعدة للصور ---
 
 const compressImage = async (imageFile: File): Promise<File> => {
   const options = {
-    maxSizeMB: 0.1, // الحد الأقصى 100 كيلوبايت
+    maxSizeMB: 0.1, 
     maxWidthOrHeight: 1024,
     useWebWorker: true
   };
@@ -26,56 +25,53 @@ const base64ToBlob = async (base64: string): Promise<Blob | null> => {
         const res = await fetch(base64);
         return await res.blob();
     } catch (e) {
+        console.error("Failed to convert base64", e);
         return null;
     }
 };
 
-// دالة لرفع الصور (لوجو أو وصفة) إلى Supabase
 const uploadImageToSupabase = async (base64: string, folder: string): Promise<string | null> => {
-    const blob = await base64ToBlob(base64);
-    if (!blob) return null;
-    
-    const file = new File([blob], "image.jpg", { type: "image/jpeg" });
-    const compressed = await compressImage(file);
-    const fileName = `${folder}/${Date.now()}.jpg`;
+    try {
+        const blob = await base64ToBlob(base64);
+        if (!blob) return null;
+        
+        const file = new File([blob], "image.jpg", { type: "image/jpeg" });
+        const compressed = await compressImage(file);
+        // نستخدم طابع زمني لضمان تفرد الاسم
+        const fileName = `${folder}/${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;
 
-    // نستخدم نفس الباكت visit-attachments للسهولة
-    const { error: uploadError } = await supabase.storage
-        .from('visit-attachments') 
-        .upload(fileName, compressed, { contentType: 'image/jpeg', upsert: false });
+        const { data, error: uploadError } = await supabase.storage
+            .from('visit-attachments') 
+            .upload(fileName, compressed, { contentType: 'image/jpeg', upsert: true });
 
-    if (uploadError) {
-        console.error("Upload Error:", uploadError);
+        if (uploadError) {
+            console.error("Upload Error Details:", uploadError);
+            alert(`فشل رفع الصورة: ${uploadError.message}`);
+            return null;
+        }
+        
+        const { data: urlData } = supabase.storage.from('visit-attachments').getPublicUrl(fileName);
+        return urlData.publicUrl;
+    } catch (err) {
+        console.error("Upload Exception:", err);
         return null;
     }
-    
-    const { data } = supabase.storage.from('visit-attachments').getPublicUrl(fileName);
-    return data.publicUrl;
 };
 
 export const dbService = {
   
-  // --- 1. المصادقة (Auth) ---
+  // 1. المصادقة
   login: async (email: string, password?: string): Promise<{ success: boolean; clinic?: Clinic; error?: string }> => {
-    const { data: clinic, error } = await supabase
-      .from('clinics')
-      .select('*')
-      .eq('email', email)
-      .single();
+    const { data: clinic, error } = await supabase.from('clinics').select('*').eq('email', email).single();
 
     if (error || !clinic) return { success: false, error: 'INVALID_CREDENTIALS' };
-
-    if (password && clinic.password !== password) {
-      return { success: false, error: 'INVALID_CREDENTIALS' };
-    }
+    if (password && clinic.password !== password) return { success: false, error: 'INVALID_CREDENTIALS' };
 
     if (clinic.role === 'doctor') {
         const today = new Date();
         const endDate = clinic.subscription_end_date ? new Date(clinic.subscription_end_date) : null;
-        const isActive = clinic.subscription_active;
-
-        if (!isActive || (endDate && today > endDate)) {
-            if (isActive) {
+        if (!clinic.subscription_active || (endDate && today > endDate)) {
+            if (clinic.subscription_active) {
                 await supabase.from('clinics').update({ subscription_active: false }).eq('id', clinic.id);
             }
             return { success: false, error: 'SUBSCRIPTION_EXPIRED' };
@@ -107,11 +103,11 @@ export const dbService = {
     localStorage.removeItem(CURRENT_SESSION_KEY);
   },
 
-  // --- 2. إدارة العيادات (للأدمن) ---
+  // 2. إدارة العيادات
   getAllClinics: async (): Promise<Clinic[]> => {
-      const { data, error } = await supabase.from('clinics').select('*').eq('role', 'doctor');
+      const { data, error } = await supabase.from('clinics').select('*').eq('role', 'doctor').order('created_at', { ascending: false });
       if (error) {
-          console.error("Error fetching clinics:", error);
+          console.error("Get Clinics Error:", error);
           return [];
       }
       
@@ -143,46 +139,69 @@ export const dbService = {
           ai_limit: 50
       }).select().single();
 
-      if (error) throw new Error(error.message);
+      if (error) {
+          alert(`خطأ في الإضافة: ${error.message}`);
+          throw new Error(error.message);
+      }
       return newClinic;
   },
 
-  updateClinic: async (id: string, data: { name: string; email: string; password?: string; aiUsageLimit?: number }) => {
-      const updates: any = {
-          name: data.name,
-          email: data.email
-      };
+  updateClinic: async (id: string, data: { name: string; email: string; password?: string; aiUsageLimit?: number; subscriptionEndDate?: string }) => {
+      const updates: any = { name: data.name, email: data.email };
       if (data.password && data.password.trim() !== '') updates.password = data.password;
       if (data.aiUsageLimit !== undefined) updates.ai_limit = data.aiUsageLimit;
+      if (data.subscriptionEndDate) updates.subscription_end_date = data.subscriptionEndDate;
 
       const { error } = await supabase.from('clinics').update(updates).eq('id', id);
-      if (error) throw new Error(error.message);
+      if (error) {
+          alert(`خطأ في التحديث: ${error.message}`);
+          throw new Error(error.message);
+      }
   },
 
   deleteClinic: async (clinicId: string) => {
       const { error } = await supabase.from('clinics').delete().eq('id', clinicId);
-      if (error) throw new Error(error.message);
+      if (error) {
+          alert(`خطأ في الحذف: ${error.message}`);
+          throw new Error(error.message);
+      }
   },
 
+  // تمديد الاشتراك
   extendSubscription: async (clinicId: string, days: number) => {
-      const { data: clinic } = await supabase.from('clinics').select('subscription_end_date').eq('id', clinicId).single();
+      const { data: clinic, error: fetchError } = await supabase.from('clinics').select('subscription_end_date').eq('id', clinicId).single();
       
+      if (fetchError) {
+          alert("لم يتم العثور على العيادة");
+          return;
+      }
+
       const now = new Date();
       const currentEnd = clinic?.subscription_end_date ? new Date(clinic.subscription_end_date) : now;
       let startDate = (currentEnd > now) ? currentEnd : now;
       startDate.setDate(startDate.getDate() + days);
 
-      await supabase.from('clinics').update({
+      const { error } = await supabase.from('clinics').update({
           subscription_active: true,
           subscription_end_date: startDate.toISOString()
       }).eq('id', clinicId);
+
+      if (error) {
+          alert(`فشل التجديد: ${error.message}`);
+          throw new Error(error.message);
+      }
   },
 
+  // إيقاف الاشتراك
   stopSubscription: async (clinicId: string) => {
-      await supabase.from('clinics').update({ subscription_active: false }).eq('id', clinicId);
+      const { error } = await supabase.from('clinics').update({ subscription_active: false }).eq('id', clinicId);
+      if (error) {
+          alert(`فشل الإيقاف: ${error.message}`);
+          throw new Error(error.message);
+      }
   },
 
-  // --- 3. إدارة المرضى ---
+  // 3. المرضى والزيارات
   getPatients: async (clinicId: string): Promise<Patient[]> => {
       const { data } = await supabase.from('patients').select('*').eq('clinic_id', clinicId);
       return (data || []).map(p => ({
@@ -195,7 +214,7 @@ export const dbService = {
           bloodType: p.blood_type,
           chronicDiseases: p.chronic_diseases || [],
           weight: p.weight,
-          allergies: p.allergies // إضافة التحسس
+          allergies: p.allergies
       }));
   },
 
@@ -226,9 +245,9 @@ export const dbService = {
           blood_type: patient.bloodType,
           chronic_diseases: patient.chronicDiseases,
           weight: patient.weight,
-          allergies: patient.allergies // إضافة التحسس
+          allergies: patient.allergies
       });
-      if (error) console.error("Error adding patient:", error);
+      if (error) alert(`خطأ في إضافة المريض: ${error.message}`);
   },
 
   updatePatient: async (id: string, data: any) => {
@@ -244,7 +263,6 @@ export const dbService = {
       }).eq('id', id);
   },
 
-  // --- 4. الزيارات ورفع الصور ---
   getPatientVisits: async (patientId: string): Promise<Visit[]> => {
       const { data } = await supabase.from('visits').select('*').eq('patient_id', patientId).order('visit_date', { ascending: false });
       return (data || []).map(v => ({
@@ -256,18 +274,15 @@ export const dbService = {
           treatment: v.treatment,
           notes: v.notes,
           prescriptionImage: v.image_url,
-          allergies: v.allergies // إضافة تحسس الزيارة
+          allergies: v.allergies
       }));
   },
 
   addVisit: async (visit: any) => {
       let imageUrl = null;
-
       if (visit.prescriptionImage && visit.prescriptionImage.startsWith('data:')) {
-          // رفع الصورة باستخدام الدالة المساعدة
           imageUrl = await uploadImageToSupabase(visit.prescriptionImage, 'visits');
       }
-
       const { error } = await supabase.from('visits').insert({
           clinic_id: visit.clinicId,
           patient_id: visit.patientId,
@@ -278,11 +293,9 @@ export const dbService = {
           image_url: imageUrl,
           allergies: visit.allergies
       });
-      
-      if (error) console.error("Error adding visit:", error);
+      if (error) alert(`خطأ في إضافة الزيارة: ${error.message}`);
   },
 
-  // ✨ تحديث الزيارة (مهم جداً)
   updateVisit: async (visitId: string, data: any) => {
       const updates: any = {
           visit_date: data.date,
@@ -291,17 +304,13 @@ export const dbService = {
           notes: data.notes,
           allergies: data.allergies
       };
-      
-      // رفع الصورة فقط إذا تغيرت (جاءت كـ base64)
       if (data.prescriptionImage && data.prescriptionImage.startsWith('data:')) {
           const newUrl = await uploadImageToSupabase(data.prescriptionImage, 'visits');
           if (newUrl) updates.image_url = newUrl;
       }
-
       await supabase.from('visits').update(updates).eq('id', visitId);
   },
 
-  // --- 5. العلامات الحيوية ---
   getPatientVitals: async (patientId: string): Promise<VitalLog[]> => {
       const { data } = await supabase.from('vital_logs').select('*').eq('patient_id', patientId).order('date', { ascending: false });
       return (data || []).map(v => ({
@@ -328,37 +337,23 @@ export const dbService = {
       });
   },
 
-  // --- 6. الأدوية ---
   getMedications: async (): Promise<string[]> => {
-      const { data, error } = await supabase
-        .from('medications')
-        .select('name')
-        .order('name', { ascending: true });
-      
-      if (error) return [];
-      return data.map(row => row.name);
+      const { data } = await supabase.from('medications').select('name');
+      return data ? data.map(m => m.name) : [];
   },
 
-  addMedication: async (name: string): Promise<string> => {
-      const { data: existing } = await supabase
-          .from('medications')
-          .select('id')
-          .eq('name', name)
-          .single();
-
-      if (!existing) {
-          await supabase.from('medications').insert({ name });
-      }
+  addMedication: async (name: string) => {
+      const { data } = await supabase.from('medications').select('id').eq('name', name).single();
+      if (!data) await supabase.from('medications').insert({ name });
       return name;
   },
 
-  // --- 7. الحسابات المالية ---
   getTransactions: async (clinicId: string): Promise<FinancialTransaction[]> => {
-      const { data } = await supabase.from('financial_transactions').select('*').eq('clinic_id', clinicId).order('date', { ascending: false });
+      const { data } = await supabase.from('financial_transactions').select('*').eq('clinic_id', clinicId);
       return (data || []).map(t => ({
           id: t.id,
           clinicId: t.clinic_id,
-          type: t.type as 'income' | 'expense',
+          type: t.type,
           category: t.category,
           amount: t.amount,
           date: t.date,
@@ -381,7 +376,6 @@ export const dbService = {
       await supabase.from('financial_transactions').delete().eq('id', id);
   },
 
-  // --- 8. رصيد الذكاء الاصطناعي ---
   checkAIQuota: async (clinicId: string): Promise<boolean> => {
       const { data } = await supabase.from('clinics').select('ai_usage_count, ai_limit').eq('id', clinicId).single();
       if (!data) return false;
@@ -390,15 +384,12 @@ export const dbService = {
 
   incrementAIUsage: async (clinicId: string) => {
       const { data } = await supabase.from('clinics').select('ai_usage_count').eq('id', clinicId).single();
-      if (data) {
-          await supabase.from('clinics').update({ ai_usage_count: (data.ai_usage_count || 0) + 1 }).eq('id', clinicId);
-      }
+      if (data) await supabase.from('clinics').update({ ai_usage_count: (data.ai_usage_count || 0) + 1 }).eq('id', clinicId);
   },
 
-  // --- 9. إعدادات النظام (System Config - Supabase) ---
+  // 4. إعدادات النظام (الصور والشعارات)
   getSystemConfig: async (): Promise<SystemConfig> => {
-    // جلب من Supabase
-    const { data } = await supabase.from('system_config').select('*').single();
+    const { data } = await supabase.from('system_config').select('*').order('id', { ascending: true }).limit(1).single();
     if (!data) return {
        paymentBarcodeUrl: '',
        paymentInstructions: 'يرجى تحويل الاشتراك.',
@@ -418,29 +409,42 @@ export const dbService = {
   },
 
   updateSystemConfig: async (config: SystemConfig) => {
-    // رفع الصور إذا كانت جديدة
+    // رفع الصور (نتعامل مع كل صورة على حدة)
     let appLogoUrl = config.appLogoUrl;
     let customLogoUrl = config.customLogoUrl;
     let barcodeUrl = config.paymentBarcodeUrl;
 
-    if (appLogoUrl && appLogoUrl.startsWith('data:')) {
-        appLogoUrl = await uploadImageToSupabase(appLogoUrl, 'config');
-    }
-    if (customLogoUrl && customLogoUrl.startsWith('data:')) {
-        customLogoUrl = await uploadImageToSupabase(customLogoUrl, 'config');
-    }
-    if (barcodeUrl && barcodeUrl.startsWith('data:')) {
-        barcodeUrl = await uploadImageToSupabase(barcodeUrl, 'config');
-    }
+    try {
+        if (appLogoUrl && appLogoUrl.startsWith('data:')) {
+            const url = await uploadImageToSupabase(appLogoUrl, 'config');
+            if (url) appLogoUrl = url;
+        }
+        if (customLogoUrl && customLogoUrl.startsWith('data:')) {
+            const url = await uploadImageToSupabase(customLogoUrl, 'config');
+            if (url) customLogoUrl = url;
+        }
+        if (barcodeUrl && barcodeUrl.startsWith('data:')) {
+            const url = await uploadImageToSupabase(barcodeUrl, 'config');
+            if (url) barcodeUrl = url;
+        }
 
-    await supabase.from('system_config').upsert({
-        id: 1, // صف واحد فقط للإعدادات
-        payment_barcode_url: barcodeUrl,
-        payment_instructions: config.paymentInstructions,
-        support_whatsapp: config.supportWhatsapp,
-        custom_logo_url: customLogoUrl,
-        app_logo_url: appLogoUrl,
-        social_links: config.socialLinks
-    });
+        const { error } = await supabase.from('system_config').upsert({
+            id: 1, // دائماً نحدث الصف رقم 1
+            payment_barcode_url: barcodeUrl,
+            payment_instructions: config.paymentInstructions,
+            support_whatsapp: config.supportWhatsapp,
+            custom_logo_url: customLogoUrl,
+            app_logo_url: appLogoUrl,
+            social_links: config.socialLinks
+        });
+
+        if (error) {
+            console.error("Config Update Error:", error);
+            alert(`فشل حفظ الإعدادات: ${error.message}`);
+        }
+    } catch (e) {
+        console.error("System Config Exception:", e);
+        alert("حدث خطأ غير متوقع أثناء حفظ الإعدادات");
+    }
   }
 };
